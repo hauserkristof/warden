@@ -4,6 +4,7 @@ import {
   resolveProviderApiKey,
   isLoopbackBaseUrl,
   assertCustomProviderAuth,
+  assertCustomProviderAuthForRuntime,
 } from './custom-provider.js';
 import type { ProvidersConfig } from '../../config/schema.js';
 
@@ -70,5 +71,39 @@ describe('assertCustomProviderAuth', () => {
       {},
     );
     expect(() => assertCustomProviderAuth(built)).not.toThrow();
+  });
+});
+
+describe('assertCustomProviderAuthForRuntime', () => {
+  it('throws for a remote pi provider without a key', () => {
+    expect(() => assertCustomProviderAuthForRuntime('pi', providers, {})).toThrow(/litellm/);
+  });
+
+  it('treats an unset runtime as pi', () => {
+    expect(() => assertCustomProviderAuthForRuntime(undefined, providers, {})).toThrow(/litellm/);
+  });
+
+  it('is a no-op for non-pi runtimes', () => {
+    expect(() => assertCustomProviderAuthForRuntime('claude', providers, {})).not.toThrow();
+  });
+
+  it('passes when the key resolves from the environment', () => {
+    expect(() =>
+      assertCustomProviderAuthForRuntime('pi', providers, { WARDEN_LITELLM_API_KEY: 'k' }),
+    ).not.toThrow();
+  });
+
+  it('passes for a loopback provider without a key', () => {
+    expect(() =>
+      assertCustomProviderAuthForRuntime(
+        'pi',
+        { local: { baseUrl: 'http://localhost:4000/v1', api: 'openai-completions', models: [{ id: 'm' }] } },
+        {},
+      ),
+    ).not.toThrow();
+  });
+
+  it('is a no-op when no providers are configured', () => {
+    expect(() => assertCustomProviderAuthForRuntime('pi', undefined, {})).not.toThrow();
   });
 });

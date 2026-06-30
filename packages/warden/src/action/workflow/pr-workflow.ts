@@ -23,6 +23,7 @@ import type {
   LoadedLayeredConfig,
   ResolvedTrigger,
 } from '../../config/loader.js';
+import { resolveAuxiliaryLaneModel } from '../../config/model-lanes.js';
 import { buildEventContext } from '../../event/context.js';
 import { matchTrigger, shouldFail, countFindingsAtOrAbove } from '../../triggers/matcher.js';
 import { fetchExistingComments } from '../../output/dedup.js';
@@ -188,14 +189,18 @@ export function resolveWorkflowAuxiliaryOptions(layered: LoadedLayeredConfig): A
     // Inherit the global default model when no explicit auxiliary model is set,
     // so workflow-scoped helper calls stay on the configured provider instead of
     // falling back to a runtime default on another provider. Base-first to match
-    // the enforced-baseline precedence above; explicit auxiliary models win.
-    model:
+    // the enforced-baseline precedence above; explicit auxiliary models win. The
+    // shared lane helper owns the auxiliary -> default fallback; this site keeps
+    // its own base-first precedence for both the explicit auxiliary input and the
+    // default model it falls back to.
+    model: resolveAuxiliaryLaneModel(
       emptyToUndefined(baseDefaults?.auxiliary?.model) ??
-      emptyToUndefined(repoDefaults?.auxiliary?.model) ??
+        emptyToUndefined(repoDefaults?.auxiliary?.model),
       emptyToUndefined(baseDefaults?.agent?.model) ??
-      emptyToUndefined(baseDefaults?.model) ??
-      emptyToUndefined(repoDefaults?.agent?.model) ??
-      emptyToUndefined(repoDefaults?.model),
+        emptyToUndefined(baseDefaults?.model) ??
+        emptyToUndefined(repoDefaults?.agent?.model) ??
+        emptyToUndefined(repoDefaults?.model),
+    ),
     maxRetries:
       baseDefaults?.auxiliary?.maxRetries ??
       baseDefaults?.auxiliaryMaxRetries ??

@@ -22,6 +22,8 @@ import {
   type ProvidersConfig,
 } from './schema.js';
 import type { SeverityThreshold, ConfidenceThreshold } from '../types/index.js';
+import { emptyToUndefined } from '../utils/index.js';
+import { resolveModelLanes } from './model-lanes.js';
 
 export class ConfigLoadError extends Error {
   constructor(message: string, options?: { cause?: unknown }) {
@@ -472,14 +474,9 @@ function resolveSkillSource(
   };
 }
 
-/**
- * Convert empty strings to undefined.
- * GitHub Actions substitutes unconfigured secrets with empty strings,
- * so we need to treat '' as "not set" for optional config values.
- */
-export function emptyToUndefined(value: string | undefined): string | undefined {
-  return value === '' ? undefined : value;
-}
+// emptyToUndefined now lives in utils (a leaf module) to avoid a loader <-> model-lanes
+// import cycle; re-exported here for existing importers.
+export { emptyToUndefined };
 
 /**
  * Resolve all skills in a config into a flat array of ResolvedTriggers.
@@ -514,12 +511,11 @@ export function resolveSkillConfigs(
     emptyToUndefined(defaults?.model) ??
     emptyToUndefined(cliModel) ??
     envModel;
-  const auxiliaryModel =
-    emptyToUndefined(defaults?.auxiliary?.model) ??
-    defaultAgentModel;
-  const synthesisModel =
-    emptyToUndefined(defaults?.synthesis?.model) ??
-    auxiliaryModel;
+  const { auxiliaryModel, synthesisModel } = resolveModelLanes({
+    defaultModel: defaultAgentModel,
+    auxiliaryModel: defaults?.auxiliary?.model,
+    synthesisModel: defaults?.synthesis?.model,
+  });
   const auxiliaryMaxRetries =
     defaults?.auxiliary?.maxRetries ??
     defaults?.auxiliaryMaxRetries;

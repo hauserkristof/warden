@@ -10,10 +10,8 @@ import {
   invalidPiModelSelectorMessage,
   type InvalidPiModelSelector,
 } from '../sdk/runtimes/model-selectors.js';
-import {
-  buildPiProviderOptions,
-  assertCustomProviderAuth,
-} from '../sdk/runtimes/custom-provider.js';
+import { assertCustomProviderAuthForRuntime } from '../sdk/runtimes/custom-provider.js';
+import { resolveAuxiliaryLaneModel, resolveSynthesisLaneModel } from '../config/model-lanes.js';
 import { mapExtractionErrorCode } from '../sdk/errors.js';
 import { aggregateAuxiliaryUsageAttribution, mergeAuxiliaryUsage } from '../sdk/usage.js';
 import { resolveSkillAsync, SkillLoaderError } from '../skills/loader.js';
@@ -818,9 +816,8 @@ export function verifyCustomProviderAuthForRun(
   env: NodeJS.ProcessEnv = process.env,
 ): boolean {
   for (const item of items) {
-    if ((item.runtime ?? 'pi') !== 'pi') continue;
     try {
-      assertCustomProviderAuth(buildPiProviderOptions(item.providers, env));
+      assertCustomProviderAuthForRuntime(item.runtime, item.providers, env);
     } catch (error) {
       reporter.error(error instanceof Error ? error.message : String(error));
       return false;
@@ -939,9 +936,9 @@ export function resolveCliDefaultAuxiliaryModel(
   config: Pick<WardenConfig, 'defaults'> | null | undefined,
   cliModel?: string
 ): string | undefined {
-  return (
-    emptyToUndefined(config?.defaults?.auxiliary?.model) ??
-    resolveCliDefaultModel(config, cliModel)
+  return resolveAuxiliaryLaneModel(
+    config?.defaults?.auxiliary?.model,
+    resolveCliDefaultModel(config, cliModel),
   );
 }
 
@@ -950,9 +947,10 @@ export function resolveCliDefaultSynthesisModel(
   config: Pick<WardenConfig, 'defaults'> | null | undefined,
   cliModel?: string
 ): string | undefined {
-  return (
-    emptyToUndefined(config?.defaults?.synthesis?.model) ??
-    resolveCliDefaultAuxiliaryModel(config, cliModel)
+  return resolveSynthesisLaneModel(
+    config?.defaults?.synthesis?.model,
+    config?.defaults?.auxiliary?.model,
+    resolveCliDefaultModel(config, cliModel),
   );
 }
 

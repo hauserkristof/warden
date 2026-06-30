@@ -14,6 +14,15 @@ export type { ExecOptions } from './exec.js';
 export const DEFAULT_CONCURRENCY = 4;
 
 /**
+ * Convert empty strings to undefined.
+ * GitHub Actions substitutes unconfigured secrets with empty strings,
+ * so we need to treat '' as "not set" for optional config values.
+ */
+export function emptyToUndefined(value: string | undefined): string | undefined {
+  return value === '' ? undefined : value;
+}
+
+/**
  * Escape HTML special characters to prevent them from being interpreted as HTML.
  * Preserves content inside markdown code blocks (```) and inline code (`).
  * Used when rendering finding titles/descriptions in GitHub comments.

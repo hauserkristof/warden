@@ -105,3 +105,20 @@ export function assertCustomProviderAuth(options: PiProviderOptions): void {
     }
   }
 }
+
+/**
+ * Runtime-aware custom-provider preflight shared by every entry point.
+ *
+ * For the Pi runtime (the default), fail fast when a remote custom provider has
+ * no resolvable API key, before any model-backed work begins. Non-Pi runtimes
+ * (e.g. claude) carry no custom providers, so this is a no-op for them.
+ * `runtime` follows the codebase convention that an unset runtime means 'pi'.
+ */
+export function assertCustomProviderAuthForRuntime(
+  runtime: string | undefined,
+  providers: ProvidersConfig | undefined,
+  env: NodeJS.ProcessEnv,
+): void {
+  if ((runtime ?? 'pi') !== 'pi') return;
+  assertCustomProviderAuth(buildPiProviderOptions(providers, env));
+}
