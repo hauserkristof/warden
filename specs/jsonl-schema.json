@@ -247,6 +247,9 @@
           ],
           "additionalProperties": false
         },
+        "suggestion": {
+          "type": "string"
+        },
         "elapsedMs": {
           "type": "number",
           "minimum": 0

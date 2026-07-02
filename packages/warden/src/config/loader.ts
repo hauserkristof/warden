@@ -400,6 +400,8 @@ export interface ResolvedTrigger {
   reportOnSuccess?: boolean;
   /** Use REQUEST_CHANGES review event when findings exceed failOn */
   requestChanges?: boolean;
+  /** Render committable ```suggestion blocks for findings that carry a fix */
+  suggestions?: boolean;
   /** Fail the check run when findings exceed failOn */
   failCheck?: boolean;
   /** Model (merged: trigger > skill > defaults > cli > env) */
@@ -447,6 +449,7 @@ function triggerIdentity(skill: SkillConfig, trigger: SkillTrigger | undefined):
     maxFindings: trigger?.maxFindings ?? skill.maxFindings,
     reportOnSuccess: trigger?.reportOnSuccess ?? skill.reportOnSuccess,
     requestChanges: trigger?.requestChanges ?? skill.requestChanges,
+    suggestions: trigger?.suggestions ?? skill.suggestions,
     failCheck: trigger?.failCheck ?? skill.failCheck,
     model: trigger?.model ?? skill.model,
     maxTurns: trigger?.maxTurns ?? skill.maxTurns,
@@ -558,6 +561,7 @@ export function resolveSkillConfigs(
         maxFindings: skill.maxFindings ?? defaults?.maxFindings,
         reportOnSuccess: skill.reportOnSuccess ?? defaults?.reportOnSuccess,
         requestChanges: skill.requestChanges ?? defaults?.requestChanges,
+        suggestions: skill.suggestions ?? defaults?.suggestions,
         failCheck: skill.failCheck ?? defaults?.failCheck,
         model: baseModel,
         maxTurns: baseMaxTurns,
@@ -594,6 +598,7 @@ export function resolveSkillConfigs(
           maxFindings: trigger.maxFindings ?? skill.maxFindings ?? defaults?.maxFindings,
           reportOnSuccess: trigger.reportOnSuccess ?? skill.reportOnSuccess ?? defaults?.reportOnSuccess,
           requestChanges: trigger.requestChanges ?? skill.requestChanges ?? defaults?.requestChanges,
+          suggestions: trigger.suggestions ?? skill.suggestions ?? defaults?.suggestions,
           failCheck: trigger.failCheck ?? skill.failCheck ?? defaults?.failCheck,
           model: emptyToUndefined(trigger.model) ?? baseModel,
           maxTurns: trigger.maxTurns ?? baseMaxTurns,

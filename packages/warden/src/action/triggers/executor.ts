@@ -122,6 +122,7 @@ export interface TriggerResult {
   minConfidence?: ConfidenceThreshold;
   reportOnSuccess?: boolean;
   requestChanges?: boolean;
+  suggestions?: boolean;
   failCheck?: boolean;
   checkRunUrl?: string;
   maxFindings?: number;
@@ -169,6 +170,7 @@ export async function executeTrigger(
       const reportOn = trigger.reportOn ?? deps.globalReportOn;
       const minConfidence = trigger.minConfidence ?? 'medium';
       const requestChanges = trigger.requestChanges ?? deps.globalRequestChanges;
+      const suggestions = trigger.suggestions ?? false;
       const failCheck = trigger.failCheck ?? deps.globalFailCheck;
       const skillRoot = trigger.useBuiltinSkill ? undefined : (trigger.skillRoot ?? context.repoPath);
 
@@ -253,6 +255,7 @@ export async function executeTrigger(
                 minConfidence,
                 failOn,
                 requestChanges,
+                suggestions,
                 checkRunUrl: skillCheckUrl,
                 totalFindings: report.findings.length,
               })
@@ -270,6 +273,7 @@ export async function executeTrigger(
           minConfidence,
           reportOnSuccess: trigger.reportOnSuccess,
           requestChanges,
+          suggestions,
           failCheck,
           checkRunUrl: skillCheckUrl,
           maxFindings,

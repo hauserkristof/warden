@@ -123,6 +123,12 @@ export const FindingSchema = z.object({
   location: LocationSchema.optional(),
   additionalLocations: z.array(LocationSchema).optional(),
   sourceSnippet: SourceSnippetSchema.optional(),
+  /**
+   * Full replacement text for exactly the lines in `location`
+   * (startLine..endLine). When present and enabled, rendered as a committable
+   * GitHub ```suggestion block. Requires `location`.
+   */
+  suggestion: z.string().optional(),
   elapsedMs: z.number().nonnegative().optional(),
 });
 export type Finding = z.infer<typeof FindingSchema>;

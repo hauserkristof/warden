@@ -58,7 +58,8 @@ Full schema:
         "startLine": 10,
         "endLine": 15
       },
-      "verification": "Required. Evidence for the public Evidence block. Write 2-5 short Markdown bullets tracing the concrete code path, guard, condition, or behavior that makes the finding real. Use function/file names when useful. Do not use checklist labels, generic reasoning, or restate the description."
+      "verification": "Required. Evidence for the public Evidence block. Write 2-5 short Markdown bullets tracing the concrete code path, guard, condition, or behavior that makes the finding real. Use function/file names when useful. Do not use checklist labels, generic reasoning, or restate the description.",
+      "suggestion": "Optional. A concrete, committable fix. The FULL replacement text for exactly the lines in 'location' (startLine..endLine) - new code only, no diff markers, no surrounding unchanged lines."
     }
   ]
 }
@@ -67,6 +68,7 @@ Requirements:
 - Return valid JSON starting with {"findings":
 - "findings" array can be empty if no issues found
 - "location.path" is auto-filled from context - just provide startLine (and optionally endLine). Omit location entirely for general findings not about a specific line.
+- "suggestion" is optional. Include it ONLY when you have a concrete, complete fix. It must be the exact replacement for every line in "location" (set "location.endLine" to cover the full span you are rewriting). Emit new code only - no leading '+'/'-', no unchanged context lines. Omit "suggestion" for advisory findings or when the fix touches code outside the range.
 - "location.startLine" MUST be within the hunk line range (shown in the "## Hunk" header). If the issue originates in surrounding code, anchor to the nearest changed line in the hunk and note the actual location in the description.
 - "confidence" reflects how certain you are this is a real issue given the codebase context
 - "description" is rendered directly in GitHub inline comments. Keep it brief and actionable, usually one sentence.

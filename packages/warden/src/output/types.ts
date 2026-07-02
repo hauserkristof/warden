@@ -35,6 +35,8 @@ export interface RenderOptions {
   failOn?: SeverityThreshold;
   /** Whether to use REQUEST_CHANGES when failOn threshold is met. Default: false */
   requestChanges?: boolean;
+  /** Whether to render committable ```suggestion blocks for findings that carry a fix. Default: false */
+  suggestions?: boolean;
   /** URL to the GitHub Check run containing the full report (used when findings are filtered) */
   checkRunUrl?: string;
   /** Total number of findings before filtering (used to show "X more findings" link) */

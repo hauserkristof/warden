@@ -1288,6 +1288,7 @@ function buildReportModeResults(
     const reportOn = trigger.reportOn ?? inputs.reportOn;
     const minConfidence = trigger.minConfidence ?? 'medium';
     const requestChanges = trigger.requestChanges ?? inputs.requestChanges;
+    const suggestions = trigger.suggestions ?? false;
     const failCheck = trigger.failCheck ?? inputs.failCheck;
     const maxFindings = trigger.maxFindings ?? inputs.maxFindings;
     const baseResult = {
@@ -1299,6 +1300,7 @@ function buildReportModeResults(
       minConfidence,
       reportOnSuccess: trigger.reportOnSuccess,
       requestChanges,
+      suggestions,
       failCheck,
       maxFindings,
     };
@@ -1357,6 +1359,7 @@ function withRenderedReviewResult(result: TriggerResult): TriggerResult {
             minConfidence: result.minConfidence,
             failOn: result.failOn,
             requestChanges: result.requestChanges,
+            suggestions: result.suggestions,
             checkRunUrl: result.checkRunUrl,
             totalFindings: result.report.findings.length,
           })

@@ -1362,3 +1362,75 @@ describe('renderFindingsBody', () => {
     expect(body).toContain('Second issue');
   });
 });
+
+describe('severity flairs and committable suggestions', () => {
+  const reportWith = (finding: SkillReport['findings'][number]): SkillReport => ({
+    skill: 'security-review',
+    summary: 'Test',
+    findings: [finding],
+  });
+
+  const baseFinding = {
+    id: 'f1',
+    title: 'Broken thing',
+    description: 'It is broken',
+    location: { path: 'src/a.ts', startLine: 10, endLine: 12 },
+  };
+
+  it('prepends an emoji + label flair per severity on inline comments', () => {
+    const cases = [
+      { severity: 'high' as const, flair: '🔴 **HIGH**' },
+      { severity: 'medium' as const, flair: '🟠 **MEDIUM**' },
+      { severity: 'low' as const, flair: '🟡 **LOW**' },
+    ];
+
+    for (const { severity, flair } of cases) {
+      const result = renderSkillReport(reportWith({ ...baseFinding, severity }));
+      const body = result.review!.comments[0]!.body;
+      expect(body).toContain(flair);
+      // Flair precedes the title
+      expect(body.indexOf(flair)).toBeLessThan(body.indexOf('Broken thing'));
+    }
+  });
+
+  it('renders a committable suggestion block when suggestions is enabled', () => {
+    const result = renderSkillReport(
+      reportWith({ ...baseFinding, severity: 'high', suggestion: 'const x = safe();' }),
+      { suggestions: true }
+    );
+    const body = result.review!.comments[0]!.body;
+    expect(body).toContain('```suggestion\nconst x = safe();\n```');
+  });
+
+  it('omits the suggestion block when the suggestions flag is off', () => {
+    const result = renderSkillReport(
+      reportWith({ ...baseFinding, severity: 'high', suggestion: 'const x = safe();' }),
+      { suggestions: false }
+    );
+    const body = result.review!.comments[0]!.body;
+    expect(body).not.toContain('```suggestion');
+    // The flair still renders regardless of the suggestions flag
+    expect(body).toContain('🔴 **HIGH**');
+  });
+
+  it('omits the suggestion block when the finding carries no suggestion', () => {
+    const result = renderSkillReport(
+      reportWith({ ...baseFinding, severity: 'high' }),
+      { suggestions: true }
+    );
+    const body = result.review!.comments[0]!.body;
+    expect(body).not.toContain('```suggestion');
+  });
+
+  it('places the suggestion block before the dedup marker so GitHub parses it', () => {
+    const result = renderSkillReport(
+      reportWith({ ...baseFinding, severity: 'high', suggestion: 'const x = safe();' }),
+      { suggestions: true }
+    );
+    const body = result.review!.comments[0]!.body;
+    const marker = parseMarker(body);
+    expect(marker).not.toBeNull();
+    // The suggestion fence must appear before the machine marker HTML comment
+    expect(body.indexOf('```suggestion')).toBeLessThan(body.indexOf('<!--'));
+  });
+});

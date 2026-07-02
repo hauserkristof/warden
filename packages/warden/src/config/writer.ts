@@ -51,6 +51,10 @@ export function generateSkillToml(skill: SkillConfig): string {
     lines.push(`requestChanges = ${skill.requestChanges}`);
   }
 
+  if (skill.suggestions !== undefined) {
+    lines.push(`suggestions = ${skill.suggestions}`);
+  }
+
   if (skill.failCheck !== undefined) {
     lines.push(`failCheck = ${skill.failCheck}`);
   }
@@ -107,6 +111,10 @@ export function generateSkillToml(skill: SkillConfig): string {
 
       if (trigger.requestChanges !== undefined) {
         lines.push(`requestChanges = ${trigger.requestChanges}`);
+      }
+
+      if (trigger.suggestions !== undefined) {
+        lines.push(`suggestions = ${trigger.suggestions}`);
       }
 
       if (trigger.failCheck !== undefined) {

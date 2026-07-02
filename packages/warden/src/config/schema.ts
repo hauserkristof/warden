@@ -97,6 +97,8 @@ export const SkillTriggerSchema = z.object({
   reportOnSuccess: z.boolean().optional(),
   /** Use REQUEST_CHANGES review event when findings exceed failOn */
   requestChanges: z.boolean().optional(),
+  /** Render committable ```suggestion blocks for findings that carry a fix. Default: false */
+  suggestions: z.boolean().optional(),
   /** Fail the check run when findings exceed failOn */
   failCheck: z.boolean().optional(),
   model: z.string().optional(),
@@ -140,6 +142,8 @@ export const SkillConfigSchema = z.object({
   reportOnSuccess: z.boolean().optional(),
   /** Use REQUEST_CHANGES review event when findings exceed failOn */
   requestChanges: z.boolean().optional(),
+  /** Render committable ```suggestion blocks for findings that carry a fix. Default: false */
+  suggestions: z.boolean().optional(),
   /** Fail the check run when findings exceed failOn */
   failCheck: z.boolean().optional(),
   /** Model to use for this skill (e.g., 'openai/gpt-5.5'). Uses SDK default if not specified. */
@@ -271,6 +275,8 @@ export const DefaultsSchema = z.object({
   reportOnSuccess: z.boolean().optional(),
   /** Use REQUEST_CHANGES review event when findings exceed failOn. Default: false */
   requestChanges: z.boolean().optional(),
+  /** Render committable ```suggestion blocks for findings that carry a fix. Default: false */
+  suggestions: z.boolean().optional(),
   /** Fail the check run when findings exceed failOn. Default: false */
   failCheck: z.boolean().optional(),
   /** Default model for all skills (e.g., 'openai/gpt-5.5') */

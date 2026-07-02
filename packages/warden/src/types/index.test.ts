@@ -3,6 +3,7 @@ import {
   filterFindingsByConfidence,
   ConfidenceThresholdSchema,
   PullRequestActionSchema,
+  FindingSchema,
 } from './index.js';
 import type { Finding } from './index.js';
 
@@ -27,6 +28,30 @@ describe('ConfidenceThresholdSchema', () => {
   it('rejects invalid values', () => {
     expect(() => ConfidenceThresholdSchema.parse('critical')).toThrow();
     expect(() => ConfidenceThresholdSchema.parse('')).toThrow();
+  });
+});
+
+describe('FindingSchema suggestion field', () => {
+  it('parses a finding without a suggestion (legacy logs)', () => {
+    const parsed = FindingSchema.parse({
+      id: 'f1',
+      severity: 'high',
+      title: 'Title',
+      description: 'Desc',
+    });
+    expect(parsed.suggestion).toBeUndefined();
+  });
+
+  it('parses a finding carrying a suggestion', () => {
+    const parsed = FindingSchema.parse({
+      id: 'f1',
+      severity: 'high',
+      title: 'Title',
+      description: 'Desc',
+      location: { path: 'src/a.ts', startLine: 10, endLine: 12 },
+      suggestion: 'const x = safe();',
+    });
+    expect(parsed.suggestion).toBe('const x = safe();');
   });
 });
 

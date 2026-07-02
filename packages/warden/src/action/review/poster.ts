@@ -377,6 +377,7 @@ export async function postTriggerReview(
                 minConfidence: result.minConfidence,
                 failOn: result.failOn,
                 requestChanges: result.requestChanges,
+                suggestions: result.suggestions,
                 checkRunUrl: result.checkRunUrl,
                 totalFindings: result.report.findings.length,
                 // Pass original findings for failOn evaluation (not affected by dedup)

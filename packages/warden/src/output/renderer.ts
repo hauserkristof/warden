@@ -6,7 +6,7 @@ import { generateContentHash, generateFindingMetadata, generateMarker } from './
 import { escapeHtml } from '../utils/index.js';
 
 export function renderSkillReport(report: SkillReport, options: RenderOptions = {}): RenderResult {
-  const { maxFindings, groupByFile = true, reportOn, minConfidence, failOn, requestChanges, checkRunUrl, totalFindings, allFindings } = options;
+  const { maxFindings, groupByFile = true, reportOn, minConfidence, failOn, requestChanges, suggestions, checkRunUrl, totalFindings, allFindings } = options;
 
   // Filter by reportOn threshold and confidence, then apply maxFindings limit
   const filteredFindings = filterFindings(report.findings, reportOn, minConfidence);
@@ -22,11 +22,22 @@ export function renderSkillReport(report: SkillReport, options: RenderOptions = 
   // Use allFindings for failOn evaluation if provided (e.g., when report.findings was modified for dedup)
   // Apply confidence filtering to failOn evaluation too
   const findingsForFailOn = filterFindings(allFindings ?? report.findings, undefined, minConfidence);
-  const review = renderReview(sortedFindings, report, failOn, findingsForFailOn, requestChanges);
+  const review = renderReview(sortedFindings, report, failOn, findingsForFailOn, requestChanges, suggestions);
   const summaryComment = renderSummaryComment(report, sortedFindings, groupByFile, checkRunUrl, hiddenCount);
 
   return { review, summaryComment };
 }
+
+/**
+ * Severity flair prepended to each inline review comment so severity is
+ * scannable in the PR timeline. Always rendered, independent of the
+ * suggestions flag.
+ */
+const SEVERITY_FLAIR: Record<Severity, string> = {
+  high: '🔴 **HIGH**',
+  medium: '🟠 **MEDIUM**',
+  low: '🟡 **LOW**',
+};
 
 function renderReview(
   findings: Finding[],
@@ -34,6 +45,7 @@ function renderReview(
   failOn?: SeverityThreshold,
   allFindings?: Finding[],
   requestChanges?: boolean,
+  suggestions?: boolean,
 ): GitHubReview | undefined {
   const findingsWithLocation = findings.filter((f) => f.location);
   const findingsWithoutLocation = findings.filter((f) => !f.location);
@@ -67,12 +79,18 @@ function renderReview(
     if (!location) {
       throw new Error('Unexpected: finding without location in filtered list');
     }
-    let body = `**${escapeHtml(finding.title)}**\n\n${escapeHtml(finding.description)}`;
+    let body = `${SEVERITY_FLAIR[finding.severity]} · **${escapeHtml(finding.title)}**\n\n${escapeHtml(finding.description)}`;
 
     if (finding.verification?.trim()) {
       body += `\n\n${renderVerification(finding.verification)}`;
     }
 
+    // Committable suggestion. Replaces exactly the anchored line range
+    // (startLine..endLine). Content is emitted verbatim, never escaped, so
+    // GitHub can commit it. Placed before the machine markers below.
+    if (suggestions && finding.suggestion !== undefined) {
+      body += `\n\n\`\`\`suggestion\n${finding.suggestion}\n\`\`\``;
+    }
 
     // Additional locations section
     if (finding.additionalLocations?.length) {
