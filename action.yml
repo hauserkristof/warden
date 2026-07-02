@@ -59,6 +59,10 @@ inputs:
     description: 'Whether to deduplicate findings against non-Warden (external) PR comments. Set to false to post Warden findings even when another bot or reviewer already commented on the same issue.'
     required: false
     default: 'true'
+  pr-summary:
+    description: 'Whether to post a sticky, aggregated PR summary comment (severity totals + per-file findings table, upserted on each run). Set to false to post inline comments only.'
+    required: false
+    default: 'true'
 
 outputs:
   findings-count:
@@ -95,4 +99,5 @@ runs:
         INPUT_FAIL_CHECK: ${{ inputs.fail-check }}
         INPUT_PARALLEL: ${{ inputs.parallel }}
         INPUT_DEDUP_EXTERNAL: ${{ inputs.dedup-external }}
+        INPUT_PR_SUMMARY: ${{ inputs.pr-summary }}
       run: node ${{ github.action_path }}/dist/action/index.js

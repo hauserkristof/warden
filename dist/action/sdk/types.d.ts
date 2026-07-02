@@ -1,6 +1,6 @@
 import type { Finding, UsageStats, SkippedFile, RetryConfig, ErrorCode, HunkFailure, HunkTrace } from '../types/index.js';
 import type { HunkWithContext } from '../diff/index.js';
-import type { ChunkingConfig, Effort, IgnoreConfig, ProvidersConfig, ScanConfig } from '../config/schema.js';
+import type { ChunkingConfig, Effort, IgnoreConfig, McpServerConfig, ProvidersConfig, ScanConfig } from '../config/schema.js';
 import type { RuntimeName } from './runtimes/index.js';
 import type { ProviderFailureCircuitBreaker } from './circuit-breaker.js';
 /** A single auxiliary usage entry, keyed by agent name (e.g. 'extraction', 'dedup'). */
@@ -108,6 +108,8 @@ export interface SkillRunnerOptions {
     runtime?: RuntimeName;
     /** Custom OpenAI-compatible providers to register for the Pi runtime. */
     providers?: ProvidersConfig;
+    /** Global MCP servers available to skills that opt in (Pi runtime only). */
+    mcpServers?: McpServerConfig[];
     /** Model to use for auxiliary structured model calls. Uses runtime default if not specified. */
     auxiliaryModel?: string;
     /** Model to use for post-analysis synthesis/consolidation. Falls back to auxiliaryModel when not specified. */

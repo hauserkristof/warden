@@ -1247,6 +1247,7 @@ function parseActionInputs() {
     const requestChanges = parseBooleanInput(getInput('request-changes'));
     const failCheck = parseBooleanInput(getInput('fail-check'));
     const dedupExternal = parseBooleanInput(getInput('dedup-external'));
+    const prSummary = parseBooleanInput(getInput('pr-summary'));
     return {
         anthropicApiKey,
         oauthToken,
@@ -1263,6 +1264,7 @@ function parseActionInputs() {
         failCheck,
         parallel: Number.isNaN(parallelParsed) ? _utils_index_js__WEBPACK_IMPORTED_MODULE_1__/* .DEFAULT_CONCURRENCY */ .WH : parallelParsed,
         dedupExternal,
+        prSummary,
     };
 }
 /**
@@ -1538,6 +1540,211 @@ function buildFindingsOutput(reports, context, findingObservations = [], options
         findingObservations,
     };
     return FindingsOutputSchema.parse(output);
+}
+
+
+/***/ }),
+
+/***/ 37888:
+/***/ ((__unused_webpack_module, __webpack_exports__, __webpack_require__) => {
+
+/* harmony export */ __webpack_require__.d(__webpack_exports__, {
+/* harmony export */   F3: () => (/* binding */ postPrSummary)
+/* harmony export */ });
+/* unused harmony exports PR_SUMMARY_MARKER, renderPrSummary */
+/* harmony import */ var _types_index_js__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(78481);
+/* harmony import */ var _output_dedup_js__WEBPACK_IMPORTED_MODULE_1__ = __webpack_require__(3941);
+/* harmony import */ var _utils_index_js__WEBPACK_IMPORTED_MODULE_2__ = __webpack_require__(36137);
+/* harmony import */ var _cli_output_tty_js__WEBPACK_IMPORTED_MODULE_3__ = __webpack_require__(80029);
+/**
+ * PR Summary Comment
+ *
+ * Warden posts findings as inline review comments (one review per skill), which
+ * gives no at-a-glance overview of a PR. This module renders a single,
+ * CodeRabbit-style summary and upserts it as a sticky top-level PR comment:
+ * severity totals, a per-skill walkthrough, and a per-file table that deep-links
+ * each finding to its inline review comment. It is sticky — re-runs edit the
+ * same comment (matched by a hidden marker) instead of piling up duplicates.
+ *
+ * Rendering is pure and unit-tested; posting is a thin Octokit wrapper.
+ */
+
+
+
+
+/** Hidden marker that identifies the sticky summary comment for upsert. */
+const PR_SUMMARY_MARKER = '<!-- warden:pr-summary:v1 -->';
+const SEVERITY_EMOJI = {
+    high: '🔴',
+    medium: '🟠',
+    low: '🟡',
+};
+/**
+ * Collect the reportable findings per trigger, applying the same reportOn /
+ * minConfidence / maxFindings filtering the poster uses, so the summary matches
+ * exactly what was posted inline.
+ */
+function collectReportableFindings(results) {
+    const collected = [];
+    for (const result of results) {
+        if (!result.report)
+            continue;
+        const filtered = (0,_types_index_js__WEBPACK_IMPORTED_MODULE_0__/* .filterFindings */ .Ni)(result.report.findings, result.reportOn, result.minConfidence);
+        const limited = result.maxFindings ? filtered.slice(0, result.maxFindings) : filtered;
+        for (const finding of limited) {
+            collected.push({ finding, skill: result.report.skill });
+        }
+    }
+    return collected;
+}
+function severityCounts(findings) {
+    const counts = { high: 0, medium: 0, low: 0 };
+    for (const { finding } of findings)
+        counts[finding.severity] += 1;
+    return counts;
+}
+/** Render the totals line, e.g. "**5 findings** · 🔴 2 high · 🟠 3 medium". */
+function renderTotals(findings) {
+    const counts = severityCounts(findings);
+    const parts = ['high', 'medium', 'low']
+        .filter((sev) => counts[sev] > 0)
+        .map((sev) => `${SEVERITY_EMOJI[sev]} ${counts[sev]} ${sev}`);
+    const total = findings.length;
+    const totalLabel = `**${total} ${total === 1 ? 'finding' : 'findings'}**`;
+    return parts.length > 0 ? `${totalLabel} · ${parts.join(' · ')}` : totalLabel;
+}
+/** One deep link to a finding's inline comment, falling back to plain text. */
+function renderFindingLink(item, options) {
+    const { finding } = item;
+    const emoji = SEVERITY_EMOJI[finding.severity];
+    const title = (0,_utils_index_js__WEBPACK_IMPORTED_MODULE_2__/* .escapeHtml */ .ZD)(finding.title);
+    const hash = (0,_output_dedup_js__WEBPACK_IMPORTED_MODULE_1__/* .generateContentHash */ .LQ)(finding.title, finding.description);
+    const commentId = options.commentIdByHash?.get(hash);
+    if (commentId) {
+        const url = `https://github.com/${options.owner}/${options.repo}/pull/${options.prNumber}#discussion_r${commentId}`;
+        return `${emoji} [${title}](${url})`;
+    }
+    return `${emoji} ${title}`;
+}
+function groupByFile(findings) {
+    const groups = new Map();
+    const order = (f) => _types_index_js__WEBPACK_IMPORTED_MODULE_0__/* .SEVERITY_ORDER */ .B[f.finding.severity];
+    for (const item of findings) {
+        const key = item.finding.location?.path ?? '(general)';
+        const bucket = groups.get(key) ?? [];
+        bucket.push(item);
+        groups.set(key, bucket);
+    }
+    for (const bucket of groups.values())
+        bucket.sort((a, b) => order(a) - order(b));
+    return groups;
+}
+/**
+ * Render the sticky summary body. Pure — all GitHub I/O is done by the caller.
+ */
+function renderPrSummary(results, options) {
+    const findings = collectReportableFindings(results);
+    const skills = [...new Set(results.flatMap((r) => (r.report ? [r.report.skill] : [])))];
+    const lines = [PR_SUMMARY_MARKER, '', '## 🔭 Argus review', ''];
+    const shaNote = options.headSha ? ` _· updated for \`${options.headSha.slice(0, 7)}\`_` : '';
+    if (findings.length === 0) {
+        lines.push(`✅ No issues found by Argus.${shaNote}`);
+        if (skills.length > 0) {
+            lines.push('', `<sub>🤖 Argus · ${skills.map(_utils_index_js__WEBPACK_IMPORTED_MODULE_2__/* .escapeHtml */ .ZD).join(', ')}</sub>`);
+        }
+        return { body: lines.join('\n'), findingCount: 0 };
+    }
+    lines.push(`${renderTotals(findings)}${shaNote}`, '');
+    // Walkthrough: each skill's own summary text, collapsed by default.
+    const walkthrough = results.flatMap((r) => {
+        const report = r.report;
+        const summary = report?.summary?.trim();
+        return report && summary ? [`- **${(0,_utils_index_js__WEBPACK_IMPORTED_MODULE_2__/* .escapeHtml */ .ZD)(report.skill)}** — ${(0,_utils_index_js__WEBPACK_IMPORTED_MODULE_2__/* .escapeHtml */ .ZD)(summary)}`] : [];
+    });
+    if (walkthrough.length > 0) {
+        lines.push('<details><summary>Walkthrough</summary>', '', ...walkthrough, '', '</details>', '');
+    }
+    // Per-file findings table, each finding deep-linked to its inline comment.
+    lines.push('### Findings', '', '| File | Findings |', '|------|----------|');
+    for (const [file, fileFindings] of groupByFile(findings)) {
+        const cells = fileFindings.map((item) => renderFindingLink(item, options)).join(' · ');
+        lines.push(`| \`${(0,_utils_index_js__WEBPACK_IMPORTED_MODULE_2__/* .escapeHtml */ .ZD)(file)}\` | ${cells} |`);
+    }
+    lines.push('', `<sub>🤖 Argus · ${skills.map(_utils_index_js__WEBPACK_IMPORTED_MODULE_2__/* .escapeHtml */ .ZD).join(', ')} · findings are posted inline on the diff</sub>`);
+    return { body: lines.join('\n'), findingCount: findings.length };
+}
+/**
+ * Build a contentHash → inline-comment-id map from the PR's current Warden
+ * review comments, so the summary can deep-link each finding. Best effort:
+ * returns an empty map on failure (summary then lists findings without links).
+ */
+async function buildCommentIdMap(octokit, owner, repo, prNumber) {
+    const map = new Map();
+    try {
+        const comments = await (0,_output_dedup_js__WEBPACK_IMPORTED_MODULE_1__/* .fetchExistingComments */ .kX)(octokit, owner, repo, prNumber);
+        for (const comment of comments) {
+            if (comment.isWarden && comment.contentHash && comment.id > 0 && !map.has(comment.contentHash)) {
+                map.set(comment.contentHash, comment.id);
+            }
+        }
+    }
+    catch (error) {
+        (0,_cli_output_tty_js__WEBPACK_IMPORTED_MODULE_3__/* .warnAction */ .T6)(`PR summary: could not fetch comments for deep links: ${error}`);
+    }
+    return map;
+}
+/**
+ * Find the existing sticky summary comment (by marker), across all pages.
+ */
+async function findExistingSummary(octokit, owner, repo, prNumber) {
+    const comments = await octokit.paginate(octokit.issues.listComments, {
+        owner,
+        repo,
+        issue_number: prNumber,
+        per_page: 100,
+    });
+    const existing = comments.find((c) => typeof c.body === 'string' && c.body.includes(PR_SUMMARY_MARKER));
+    return existing?.id;
+}
+/**
+ * Render and upsert the sticky PR summary comment.
+ *
+ * - Findings present → create or update the summary.
+ * - No findings, summary exists → update it to the resolved state.
+ * - No findings, no summary → skip (don't add noise to clean PRs).
+ *
+ * Never throws: a summary failure must not fail the review.
+ */
+async function postPrSummary(octokit, context, results) {
+    if (!context.pullRequest)
+        return;
+    const { owner, name: repo } = context.repository;
+    const prNumber = context.pullRequest.number;
+    try {
+        const commentIdByHash = await buildCommentIdMap(octokit, owner, repo, prNumber);
+        const { body, findingCount } = renderPrSummary(results, {
+            owner,
+            repo,
+            prNumber,
+            headSha: context.pullRequest.headSha,
+            commentIdByHash,
+        });
+        const existingId = await findExistingSummary(octokit, owner, repo, prNumber);
+        if (findingCount === 0 && existingId === undefined) {
+            return; // clean PR, no prior summary — stay quiet
+        }
+        if (existingId !== undefined) {
+            await octokit.issues.updateComment({ owner, repo, comment_id: existingId, body });
+            (0,_cli_output_tty_js__WEBPACK_IMPORTED_MODULE_3__/* .logAction */ .d5)(`Updated PR summary comment (${findingCount} findings)`);
+        }
+        else {
+            await octokit.issues.createComment({ owner, repo, issue_number: prNumber, body });
+            (0,_cli_output_tty_js__WEBPACK_IMPORTED_MODULE_3__/* .logAction */ .d5)(`Posted PR summary comment (${findingCount} findings)`);
+        }
+    }
+    catch (error) {
+        (0,_cli_output_tty_js__WEBPACK_IMPORTED_MODULE_3__/* .warnAction */ .T6)(`Failed to post PR summary comment: ${error}`);
+    }
 }
 
 
@@ -1876,6 +2083,7 @@ async function postTriggerReview(ctx, deps) {
                     minConfidence: result.minConfidence,
                     failOn: result.failOn,
                     requestChanges: result.requestChanges,
+                    suggestions: result.suggestions,
                     checkRunUrl: result.checkRunUrl,
                     totalFindings: result.report.findings.length,
                     // Pass original findings for failOn evaluation (not affected by dedup)
@@ -2139,6 +2347,7 @@ async function executeTrigger(trigger, deps) {
         const reportOn = trigger.reportOn ?? deps.globalReportOn;
         const minConfidence = trigger.minConfidence ?? 'medium';
         const requestChanges = trigger.requestChanges ?? deps.globalRequestChanges;
+        const suggestions = trigger.suggestions ?? false;
         const failCheck = trigger.failCheck ?? deps.globalFailCheck;
         const skillRoot = trigger.useBuiltinSkill ? undefined : (trigger.skillRoot ?? context.repoPath);
         try {
@@ -2172,6 +2381,7 @@ async function executeTrigger(trigger, deps) {
                     verifyFindings: trigger.verifyFindings,
                     abortController: deps.abortController,
                     circuitBreaker: deps.circuitBreaker,
+                    mcpServers: deps.mcpServers,
                 },
             };
             const callbacks = (0,_cli_output_tasks_js__WEBPACK_IMPORTED_MODULE_4__/* .createDefaultCallbacks */ .O7)([taskOptions], CI_OUTPUT_MODE, _cli_output_verbosity_js__WEBPACK_IMPORTED_MODULE_7__/* .Verbosity */ .W.Normal);
@@ -2213,6 +2423,7 @@ async function executeTrigger(trigger, deps) {
                     minConfidence,
                     failOn,
                     requestChanges,
+                    suggestions,
                     checkRunUrl: skillCheckUrl,
                     totalFindings: report.findings.length,
                 })
@@ -2229,6 +2440,7 @@ async function executeTrigger(trigger, deps) {
                 minConfidence,
                 reportOnSuccess: trigger.reportOnSuccess,
                 requestChanges,
+                suggestions,
                 failCheck,
                 checkRunUrl: skillCheckUrl,
                 maxFindings,
@@ -2630,19 +2842,21 @@ __webpack_require__.a(module, async (__webpack_handle_async_dependencies__, __we
 /* harmony import */ var _types_index_js__WEBPACK_IMPORTED_MODULE_9__ = __webpack_require__(78481);
 /* harmony import */ var _utils_index_js__WEBPACK_IMPORTED_MODULE_10__ = __webpack_require__(36137);
 /* harmony import */ var _fix_evaluation_index_js__WEBPACK_IMPORTED_MODULE_11__ = __webpack_require__(45154);
-/* harmony import */ var _sdk_usage_js__WEBPACK_IMPORTED_MODULE_23__ = __webpack_require__(44759);
-/* harmony import */ var _cli_output_tty_js__WEBPACK_IMPORTED_MODULE_22__ = __webpack_require__(80029);
+/* harmony import */ var _sdk_usage_js__WEBPACK_IMPORTED_MODULE_25__ = __webpack_require__(44759);
+/* harmony import */ var _cli_output_tty_js__WEBPACK_IMPORTED_MODULE_24__ = __webpack_require__(80029);
 /* harmony import */ var _cli_output_formatters_js__WEBPACK_IMPORTED_MODULE_12__ = __webpack_require__(43171);
 /* harmony import */ var _review_state_js__WEBPACK_IMPORTED_MODULE_13__ = __webpack_require__(52552);
 /* harmony import */ var _triggers_executor_js__WEBPACK_IMPORTED_MODULE_14__ = __webpack_require__(19533);
 /* harmony import */ var _review_poster_js__WEBPACK_IMPORTED_MODULE_15__ = __webpack_require__(44602);
-/* harmony import */ var _review_coordination_js__WEBPACK_IMPORTED_MODULE_24__ = __webpack_require__(48352);
-/* harmony import */ var _sdk_extract_js__WEBPACK_IMPORTED_MODULE_16__ = __webpack_require__(29709);
-/* harmony import */ var _sdk_circuit_breaker_js__WEBPACK_IMPORTED_MODULE_17__ = __webpack_require__(71794);
-/* harmony import */ var _checks_manager_js__WEBPACK_IMPORTED_MODULE_18__ = __webpack_require__(47423);
-/* harmony import */ var _base_js__WEBPACK_IMPORTED_MODULE_19__ = __webpack_require__(53537);
-/* harmony import */ var _output_renderer_js__WEBPACK_IMPORTED_MODULE_20__ = __webpack_require__(21242);
-/* harmony import */ var _reporting_output_js__WEBPACK_IMPORTED_MODULE_21__ = __webpack_require__(80961);
+/* harmony import */ var _reporting_pr_summary_js__WEBPACK_IMPORTED_MODULE_16__ = __webpack_require__(37888);
+/* harmony import */ var _review_coordination_js__WEBPACK_IMPORTED_MODULE_26__ = __webpack_require__(48352);
+/* harmony import */ var _sdk_runtimes_index_js__WEBPACK_IMPORTED_MODULE_17__ = __webpack_require__(23473);
+/* harmony import */ var _sdk_extract_js__WEBPACK_IMPORTED_MODULE_18__ = __webpack_require__(29709);
+/* harmony import */ var _sdk_circuit_breaker_js__WEBPACK_IMPORTED_MODULE_19__ = __webpack_require__(71794);
+/* harmony import */ var _checks_manager_js__WEBPACK_IMPORTED_MODULE_20__ = __webpack_require__(47423);
+/* harmony import */ var _base_js__WEBPACK_IMPORTED_MODULE_21__ = __webpack_require__(53537);
+/* harmony import */ var _output_renderer_js__WEBPACK_IMPORTED_MODULE_22__ = __webpack_require__(21242);
+/* harmony import */ var _reporting_output_js__WEBPACK_IMPORTED_MODULE_23__ = __webpack_require__(80961);
 var __webpack_async_dependencies__ = __webpack_handle_async_dependencies__([_triggers_executor_js__WEBPACK_IMPORTED_MODULE_14__]);
 _triggers_executor_js__WEBPACK_IMPORTED_MODULE_14__ = (__webpack_async_dependencies__.then ? (await __webpack_async_dependencies__)() : __webpack_async_dependencies__)[0];
 /**
@@ -2653,6 +2867,8 @@ _triggers_executor_js__WEBPACK_IMPORTED_MODULE_14__ = (__webpack_async_dependenc
  * artifact creation, while report owns GitHub writes and must only replay an
  * artifact that matches the current PR context.
  */
+
+
 
 
 
@@ -2752,13 +2968,13 @@ function logFixEvaluation(ev, index, total) {
     const verdict = ev.verdict;
     const line = `  [${index + 1}/${total}] ${idPrefix}${ev.path}:${ev.line} → ${verdict} (${(0,_cli_output_formatters_js__WEBPACK_IMPORTED_MODULE_12__/* .formatDuration */ .a3)(ev.durationMs)}, ${(0,_cli_output_formatters_js__WEBPACK_IMPORTED_MODULE_12__/* .formatTokens */ ._y)(totalTokens)} tok${costStr})`;
     if (ev.usedFallback) {
-        (0,_cli_output_tty_js__WEBPACK_IMPORTED_MODULE_22__/* .warnAction */ .T6)(line);
+        (0,_cli_output_tty_js__WEBPACK_IMPORTED_MODULE_24__/* .warnAction */ .T6)(line);
     }
     else {
-        (0,_cli_output_tty_js__WEBPACK_IMPORTED_MODULE_22__/* .logAction */ .d5)(line);
+        (0,_cli_output_tty_js__WEBPACK_IMPORTED_MODULE_24__/* .logAction */ .d5)(line);
     }
     if (ev.verdict === 'attempted_failed' && ev.reasoning) {
-        (0,_cli_output_tty_js__WEBPACK_IMPORTED_MODULE_22__/* .logAction */ .d5)(`        reason: "${ev.reasoning}"`);
+        (0,_cli_output_tty_js__WEBPACK_IMPORTED_MODULE_24__/* .logAction */ .d5)(`        reason: "${ev.reasoning}"`);
     }
 }
 function groupCommentsForFixEvaluation(comments, headSha) {
@@ -2795,7 +3011,7 @@ function mergeFixEvaluationResults(results) {
         uniqueFindingsEvaluated: results.reduce((total, result) => total + result.uniqueFindingsEvaluated, 0),
         uniqueFindingsCodeChanged: results.reduce((total, result) => total + result.uniqueFindingsCodeChanged, 0),
         uniqueFindingsResolved: results.reduce((total, result) => total + result.uniqueFindingsResolved, 0),
-        usage: (0,_sdk_usage_js__WEBPACK_IMPORTED_MODULE_23__/* .aggregateUsage */ .Z$)(results.map((result) => result.usage)),
+        usage: (0,_sdk_usage_js__WEBPACK_IMPORTED_MODULE_25__/* .aggregateUsage */ .Z$)(results.map((result) => result.usage)),
         evaluations: results.flatMap((result) => result.evaluations),
     };
 }
@@ -2812,22 +3028,22 @@ async function initializeWorkflow(octokit, inputs, eventName, eventPath, repoPat
     }
     catch (error) {
         _sentry_js__WEBPACK_IMPORTED_MODULE_2__/* .Sentry.captureException */ .sQ.captureException(error, { tags: { operation: 'read_event_payload' } });
-        (0,_base_js__WEBPACK_IMPORTED_MODULE_19__/* .setFailed */ .C1)(`Failed to read event payload: ${error}`);
+        (0,_base_js__WEBPACK_IMPORTED_MODULE_21__/* .setFailed */ .C1)(`Failed to read event payload: ${error}`);
     }
-    (0,_base_js__WEBPACK_IMPORTED_MODULE_19__/* .logGroup */ .QT)('Building event context');
+    (0,_base_js__WEBPACK_IMPORTED_MODULE_21__/* .logGroup */ .QT)('Building event context');
     console.log(`Event: ${eventName}`);
     console.log(`Workspace: ${repoPath}`);
-    (0,_base_js__WEBPACK_IMPORTED_MODULE_19__/* .logGroupEnd */ .TN)();
+    (0,_base_js__WEBPACK_IMPORTED_MODULE_21__/* .logGroupEnd */ .TN)();
     let context;
     try {
         context = await (0,_event_context_js__WEBPACK_IMPORTED_MODULE_5__/* .buildEventContext */ .e)(eventName, eventPayload, repoPath, octokit);
     }
     catch (error) {
         _sentry_js__WEBPACK_IMPORTED_MODULE_2__/* .Sentry.captureException */ .sQ.captureException(error, { tags: { operation: 'build_event_context' } });
-        (0,_base_js__WEBPACK_IMPORTED_MODULE_19__/* .setFailed */ .C1)(`Failed to build event context: ${error}`);
+        (0,_base_js__WEBPACK_IMPORTED_MODULE_21__/* .setFailed */ .C1)(`Failed to build event context: ${error}`);
     }
     (0,_sentry_js__WEBPACK_IMPORTED_MODULE_2__/* .setRepositoryScope */ .vx)(context.repository.fullName);
-    (0,_base_js__WEBPACK_IMPORTED_MODULE_19__/* .logGroup */ .QT)('Loading configuration');
+    (0,_base_js__WEBPACK_IMPORTED_MODULE_21__/* .logGroup */ .QT)('Loading configuration');
     if (inputs.baseConfigPath) {
         console.log(`Base config path: ${inputs.baseConfigPath}`);
     }
@@ -2835,7 +3051,7 @@ async function initializeWorkflow(octokit, inputs, eventName, eventPath, repoPat
         console.log(`Base skill root: ${inputs.baseSkillRoot}`);
     }
     console.log(`Repo config path: ${inputs.configPath}`);
-    (0,_base_js__WEBPACK_IMPORTED_MODULE_19__/* .logGroupEnd */ .TN)();
+    (0,_base_js__WEBPACK_IMPORTED_MODULE_21__/* .logGroupEnd */ .TN)();
     let runnerConcurrency;
     let auxiliaryOptions = { runtime: 'pi' };
     let skillRootsByName;
@@ -2858,16 +3074,23 @@ async function initializeWorkflow(octokit, inputs, eventName, eventPath, repoPat
         const matchedTriggers = resolvedTriggers.filter((t) => (0,_triggers_matcher_js__WEBPACK_IMPORTED_MODULE_6__/* .matchTrigger */ .QW)(t, context, 'github'));
         const skippedTriggers = resolvedTriggers.filter((t) => reportsPullRequestCheck(t, context) && !matchedTriggers.includes(t));
         if (matchedTriggers.length > 0) {
-            (0,_base_js__WEBPACK_IMPORTED_MODULE_19__/* .logGroup */ .QT)('Matched triggers');
+            (0,_base_js__WEBPACK_IMPORTED_MODULE_21__/* .logGroup */ .QT)('Matched triggers');
             for (const trigger of matchedTriggers) {
                 console.log(`- ${trigger.name}: ${trigger.skill}`);
             }
-            (0,_base_js__WEBPACK_IMPORTED_MODULE_19__/* .logGroupEnd */ .TN)();
+            (0,_base_js__WEBPACK_IMPORTED_MODULE_21__/* .logGroupEnd */ .TN)();
         }
         else {
             console.log('No triggers matched for this event');
         }
-        return { context, runnerConcurrency, auxiliaryOptions, matchedTriggers, skippedTriggers };
+        return {
+            context,
+            runnerConcurrency,
+            auxiliaryOptions,
+            matchedTriggers,
+            skippedTriggers,
+            mcpServers: layered.config.mcp?.servers,
+        };
     }
     catch (error) {
         if (error instanceof _config_loader_js__WEBPACK_IMPORTED_MODULE_3__/* .ConfigLoadError */ .tx &&
@@ -2899,9 +3122,9 @@ async function fetchPreviousReviewInfo(octokit, context) {
         return null;
     }
     try {
-        const botLogin = await (0,_base_js__WEBPACK_IMPORTED_MODULE_19__/* .getAuthenticatedBotLogin */ .Uf)(octokit);
+        const botLogin = await (0,_base_js__WEBPACK_IMPORTED_MODULE_21__/* .getAuthenticatedBotLogin */ .Uf)(octokit);
         if (!botLogin) {
-            (0,_cli_output_tty_js__WEBPACK_IMPORTED_MODULE_22__/* .logAction */ .d5)('Skipping dismiss flow: cannot identify bot (using PAT or GITHUB_TOKEN instead of GitHub App)');
+            (0,_cli_output_tty_js__WEBPACK_IMPORTED_MODULE_24__/* .logAction */ .d5)('Skipping dismiss flow: cannot identify bot (using PAT or GITHUB_TOKEN instead of GitHub App)');
             return null;
         }
         // Note: No pagination. PRs with 100+ reviews are rare; if Warden's review
@@ -2915,7 +3138,7 @@ async function fetchPreviousReviewInfo(octokit, context) {
         return (0,_review_state_js__WEBPACK_IMPORTED_MODULE_13__/* .findBotReviewState */ .a)(reviews, botLogin);
     }
     catch (error) {
-        (0,_cli_output_tty_js__WEBPACK_IMPORTED_MODULE_22__/* .warnAction */ .T6)(`Failed to fetch previous review info: ${error}`);
+        (0,_cli_output_tty_js__WEBPACK_IMPORTED_MODULE_24__/* .warnAction */ .T6)(`Failed to fetch previous review info: ${error}`);
         return null;
     }
 }
@@ -2930,21 +3153,21 @@ async function setupGitHubState(octokit, context) {
     let previousReviewInfo = null;
     // Create core warden check
     try {
-        const coreCheck = await (0,_checks_manager_js__WEBPACK_IMPORTED_MODULE_18__/* .createCoreCheck */ .c)(octokit, {
+        const coreCheck = await (0,_checks_manager_js__WEBPACK_IMPORTED_MODULE_20__/* .createCoreCheck */ .c)(octokit, {
             owner: context.repository.owner,
             repo: context.repository.name,
             headSha: context.pullRequest.headSha,
         });
         coreCheckId = coreCheck.checkRunId;
-        (0,_cli_output_tty_js__WEBPACK_IMPORTED_MODULE_22__/* .logAction */ .d5)(`Created core check: ${coreCheck.url}`);
+        (0,_cli_output_tty_js__WEBPACK_IMPORTED_MODULE_24__/* .logAction */ .d5)(`Created core check: ${coreCheck.url}`);
     }
     catch (error) {
         _sentry_js__WEBPACK_IMPORTED_MODULE_2__/* .Sentry.captureException */ .sQ.captureException(error, { tags: { operation: 'create_core_check' } });
-        (0,_cli_output_tty_js__WEBPACK_IMPORTED_MODULE_22__/* .warnAction */ .T6)(`Failed to create core check: ${error}`);
+        (0,_cli_output_tty_js__WEBPACK_IMPORTED_MODULE_24__/* .warnAction */ .T6)(`Failed to create core check: ${error}`);
     }
     previousReviewInfo = await fetchPreviousReviewInfo(octokit, context);
     if (previousReviewInfo) {
-        (0,_cli_output_tty_js__WEBPACK_IMPORTED_MODULE_22__/* .logAction */ .d5)(`Previous Warden review state: ${previousReviewInfo.state}`);
+        (0,_cli_output_tty_js__WEBPACK_IMPORTED_MODULE_24__/* .logAction */ .d5)(`Previous Warden review state: ${previousReviewInfo.state}`);
     }
     return { coreCheckId, previousReviewInfo };
 }
@@ -2959,24 +3182,24 @@ function createTriggerCheckReporter(octokit, context) {
     }
     return {
         async start(skillName) {
-            const check = await (0,_checks_manager_js__WEBPACK_IMPORTED_MODULE_18__/* .createSkillCheck */ .uP)(octokit, skillName, checkOptions);
+            const check = await (0,_checks_manager_js__WEBPACK_IMPORTED_MODULE_20__/* .createSkillCheck */ .uP)(octokit, skillName, checkOptions);
             return {
                 url: check.url,
-                complete: (report, options) => (0,_checks_manager_js__WEBPACK_IMPORTED_MODULE_18__/* .updateSkillCheck */ .Zv)(octokit, check.checkRunId, report, {
+                complete: (report, options) => (0,_checks_manager_js__WEBPACK_IMPORTED_MODULE_20__/* .updateSkillCheck */ .Zv)(octokit, check.checkRunId, report, {
                     ...checkOptions,
                     ...options,
                 }),
-                fail: (error) => (0,_checks_manager_js__WEBPACK_IMPORTED_MODULE_18__/* .failSkillCheck */ .OZ)(octokit, check.checkRunId, error, checkOptions),
+                fail: (error) => (0,_checks_manager_js__WEBPACK_IMPORTED_MODULE_20__/* .failSkillCheck */ .OZ)(octokit, check.checkRunId, error, checkOptions),
             };
         },
     };
 }
 async function executeAllTriggers(matchedTriggers, context, runnerConcurrency, inputs, options = {}) {
     const concurrency = runnerConcurrency ?? inputs.parallel;
-    const runtimeEnv = await (0,_base_js__WEBPACK_IMPORTED_MODULE_19__/* .prepareRuntimeEnvironment */ .bZ)(matchedTriggers, inputs);
+    const runtimeEnv = await (0,_base_js__WEBPACK_IMPORTED_MODULE_21__/* .prepareRuntimeEnvironment */ .bZ)(matchedTriggers, inputs);
     const semaphore = new _utils_index_js__WEBPACK_IMPORTED_MODULE_10__/* .Semaphore */ .jf(concurrency);
     const abortController = new AbortController();
-    const circuitBreaker = new _sdk_circuit_breaker_js__WEBPACK_IMPORTED_MODULE_17__/* .ProviderFailureCircuitBreaker */ .j({ abortController });
+    const circuitBreaker = new _sdk_circuit_breaker_js__WEBPACK_IMPORTED_MODULE_19__/* .ProviderFailureCircuitBreaker */ .j({ abortController });
     // Limit trigger dispatch too; the semaphore only gates work after a trigger starts.
     return (0,_utils_index_js__WEBPACK_IMPORTED_MODULE_10__/* .runPool */ .kD)(matchedTriggers, concurrency, (trigger) => (0,_triggers_executor_js__WEBPACK_IMPORTED_MODULE_14__/* .executeTrigger */ .k)(trigger, {
         context,
@@ -2987,6 +3210,7 @@ async function executeAllTriggers(matchedTriggers, context, runnerConcurrency, i
         globalMaxFindings: inputs.maxFindings,
         globalRequestChanges: inputs.requestChanges,
         globalFailCheck: inputs.failCheck,
+        mcpServers: options.mcpServers,
         semaphore,
         abortController,
         circuitBreaker,
@@ -3014,12 +3238,12 @@ async function postReviewsAndTrackFailures(octokit, context, results, inputs, au
                 const wardenCount = fetchedComments.filter((c) => c.isWarden).length;
                 const externalCount = fetchedComments.length - wardenCount;
                 const externalNote = inputs.dedupExternal === false ? `, ${externalCount} external excluded by dedup-external=false` : `, ${externalCount} external`;
-                (0,_cli_output_tty_js__WEBPACK_IMPORTED_MODULE_22__/* .logAction */ .d5)(`Found ${fetchedComments.length} existing comments for deduplication (${wardenCount} Warden${externalNote})`);
+                (0,_cli_output_tty_js__WEBPACK_IMPORTED_MODULE_24__/* .logAction */ .d5)(`Found ${fetchedComments.length} existing comments for deduplication (${wardenCount} Warden${externalNote})`);
             }
         }
         catch (error) {
             _sentry_js__WEBPACK_IMPORTED_MODULE_2__/* .Sentry.captureException */ .sQ.captureException(error, { tags: { operation: 'fetch_existing_comments' } });
-            (0,_cli_output_tty_js__WEBPACK_IMPORTED_MODULE_22__/* .warnAction */ .T6)(`Failed to fetch existing comments for deduplication: ${error}`);
+            (0,_cli_output_tty_js__WEBPACK_IMPORTED_MODULE_24__/* .warnAction */ .T6)(`Failed to fetch existing comments for deduplication: ${error}`);
         }
     }
     // Post reviews to GitHub (sequentially to avoid rate limits)
@@ -3057,6 +3281,12 @@ async function postReviewsAndTrackFailures(octokit, context, results, inputs, au
             }
         }
     }
+    // Sticky, CodeRabbit-style PR summary aggregated across all skills. Posted
+    // after inline comments so it can deep-link each finding. Never throws;
+    // gated by the pr-summary input (default on).
+    if (inputs.prSummary !== false) {
+        await (0,_reporting_pr_summary_js__WEBPACK_IMPORTED_MODULE_16__/* .postPrSummary */ .F3)(octokit, context, results);
+    }
     return {
         reports,
         fetchedComments,
@@ -3081,7 +3311,7 @@ async function evaluateFixesAndResolveStale(octokit, context, fetchedComments, a
     const findingObservations = [];
     const commentsForFixEvaluation = wardenComments.filter((c) => !activeWardenCommentIds.has(c.id));
     const fixEvaluationRuntime = auxiliaryOptions.runtime ?? 'pi';
-    const canUseFixEvaluationRuntime = (0,_sdk_extract_js__WEBPACK_IMPORTED_MODULE_16__/* .canUseRuntimeAuth */ .ad)({
+    const canUseFixEvaluationRuntime = (0,_sdk_extract_js__WEBPACK_IMPORTED_MODULE_18__/* .canUseRuntimeAuth */ .ad)({
         apiKey: anthropicApiKey,
         runtime: fixEvaluationRuntime,
     });
@@ -3091,7 +3321,7 @@ async function evaluateFixesAndResolveStale(octokit, context, fetchedComments, a
         canResolveStale &&
         canUseFixEvaluationRuntime) {
         try {
-            (0,_base_js__WEBPACK_IMPORTED_MODULE_19__/* .logGroup */ .QT)('Fix evaluation');
+            (0,_base_js__WEBPACK_IMPORTED_MODULE_21__/* .logGroup */ .QT)('Fix evaluation');
             // Only evaluate comments that were posted on an earlier commit. If a comment was
             // posted on the current headSha there are no follow-up changes to evaluate yet, and
             // running fix evaluation would compare the entire PR diff (PR base to head) against a
@@ -3102,10 +3332,10 @@ async function evaluateFixesAndResolveStale(octokit, context, fetchedComments, a
                 .flat()
                 .filter((c) => !c.isResolved && c.threadId).length;
             if (unresolvedCount > 0) {
-                (0,_cli_output_tty_js__WEBPACK_IMPORTED_MODULE_22__/* .logAction */ .d5)(`Fix evaluation: evaluating ${unresolvedCount} unresolved comments`);
+                (0,_cli_output_tty_js__WEBPACK_IMPORTED_MODULE_24__/* .logAction */ .d5)(`Fix evaluation: evaluating ${unresolvedCount} unresolved comments`);
             }
             else {
-                (0,_cli_output_tty_js__WEBPACK_IMPORTED_MODULE_22__/* .logAction */ .d5)(`Fix evaluation: no eligible comments (${currentHeadCount} current head, ` +
+                (0,_cli_output_tty_js__WEBPACK_IMPORTED_MODULE_24__/* .logAction */ .d5)(`Fix evaluation: no eligible comments (${currentHeadCount} current head, ` +
                     `${missingOriginalCommitCount} missing original commit)`);
             }
             const groupResults = [];
@@ -3129,7 +3359,7 @@ async function evaluateFixesAndResolveStale(octokit, context, fetchedComments, a
                     throw error;
                 });
                 if (resolvedCount > 0) {
-                    (0,_cli_output_tty_js__WEBPACK_IMPORTED_MODULE_22__/* .logAction */ .d5)(`Resolved ${resolvedCount} comments via fix evaluation`);
+                    (0,_cli_output_tty_js__WEBPACK_IMPORTED_MODULE_24__/* .logAction */ .d5)(`Resolved ${resolvedCount} comments via fix evaluation`);
                 }
                 // Track only actually resolved comments for allResolved check
                 resolvedIds.forEach((id) => commentsResolvedByFixEval.add(id));
@@ -3165,21 +3395,21 @@ async function evaluateFixesAndResolveStale(octokit, context, fetchedComments, a
                 if (totalTokens > 0) {
                     usageStr = `, ${(0,_cli_output_formatters_js__WEBPACK_IMPORTED_MODULE_12__/* .formatTokens */ ._y)(totalTokens)} tok, ${(0,_cli_output_formatters_js__WEBPACK_IMPORTED_MODULE_12__/* .formatCost */ .BD)(fixEvaluation.usage.costUSD)}`;
                 }
-                (0,_cli_output_tty_js__WEBPACK_IMPORTED_MODULE_22__/* .logAction */ .d5)(`Fix evaluation: ${fixEvaluation.toResolve.length} resolved, ` +
+                (0,_cli_output_tty_js__WEBPACK_IMPORTED_MODULE_24__/* .logAction */ .d5)(`Fix evaluation: ${fixEvaluation.toResolve.length} resolved, ` +
                     `${fixEvaluation.toReply.length} need attention, ` +
                     `${fixEvaluation.skipped} skipped` +
                     usageStr);
             }
-            (0,_base_js__WEBPACK_IMPORTED_MODULE_19__/* .logGroupEnd */ .TN)();
+            (0,_base_js__WEBPACK_IMPORTED_MODULE_21__/* .logGroupEnd */ .TN)();
         }
         catch (error) {
             _sentry_js__WEBPACK_IMPORTED_MODULE_2__/* .Sentry.captureException */ .sQ.captureException(error, { tags: { operation: 'evaluate_fix_attempts' } });
             if (error instanceof ReportWriteError) {
-                (0,_base_js__WEBPACK_IMPORTED_MODULE_19__/* .logGroupEnd */ .TN)();
+                (0,_base_js__WEBPACK_IMPORTED_MODULE_21__/* .logGroupEnd */ .TN)();
                 throw error;
             }
-            (0,_cli_output_tty_js__WEBPACK_IMPORTED_MODULE_22__/* .warnAction */ .T6)(`Failed to evaluate fix attempts: ${error}`);
-            (0,_base_js__WEBPACK_IMPORTED_MODULE_19__/* .logGroupEnd */ .TN)();
+            (0,_cli_output_tty_js__WEBPACK_IMPORTED_MODULE_24__/* .warnAction */ .T6)(`Failed to evaluate fix attempts: ${error}`);
+            (0,_base_js__WEBPACK_IMPORTED_MODULE_21__/* .logGroupEnd */ .TN)();
         }
     }
     // Resolve stale Warden comments (comments that no longer have matching findings)
@@ -3199,7 +3429,7 @@ async function evaluateFixesAndResolveStale(octokit, context, fetchedComments, a
                     throw error;
                 });
                 if (resolvedCount > 0) {
-                    (0,_cli_output_tty_js__WEBPACK_IMPORTED_MODULE_22__/* .logAction */ .d5)(`Resolved ${resolvedCount} stale Warden comments`);
+                    (0,_cli_output_tty_js__WEBPACK_IMPORTED_MODULE_24__/* .logAction */ .d5)(`Resolved ${resolvedCount} stale Warden comments`);
                     (0,_sentry_js__WEBPACK_IMPORTED_MODULE_2__/* .emitStaleResolutionMetric */ .fL)(resolvedCount);
                     // Emit per-skill breakdown (only count actually resolved comments)
                     const bySkill = new Map();
@@ -3233,11 +3463,11 @@ async function evaluateFixesAndResolveStale(octokit, context, fetchedComments, a
             if (error instanceof ReportWriteError) {
                 throw error;
             }
-            (0,_cli_output_tty_js__WEBPACK_IMPORTED_MODULE_22__/* .warnAction */ .T6)(`Failed to resolve stale comments: ${error}`);
+            (0,_cli_output_tty_js__WEBPACK_IMPORTED_MODULE_24__/* .warnAction */ .T6)(`Failed to resolve stale comments: ${error}`);
         }
     }
     else if (!canResolveStale && wardenComments.length > 0) {
-        (0,_cli_output_tty_js__WEBPACK_IMPORTED_MODULE_22__/* .logAction */ .d5)('Skipping stale comment resolution due to trigger failures');
+        (0,_cli_output_tty_js__WEBPACK_IMPORTED_MODULE_24__/* .logAction */ .d5)('Skipping stale comment resolution due to trigger failures');
     }
     // Determine if all unresolved Warden comments were resolved during this run
     const unresolvedBefore = wardenComments.filter((c) => !c.isResolved);
@@ -3277,14 +3507,14 @@ async function dismissPreviousReviewIfResolved(octokit, context, previousReviewI
                 review_id: previousReviewInfo.reviewId,
                 message: 'All previously reported issues have been resolved.',
             });
-            (0,_cli_output_tty_js__WEBPACK_IMPORTED_MODULE_22__/* .logAction */ .d5)('Dismissed previous CHANGES_REQUESTED review');
+            (0,_cli_output_tty_js__WEBPACK_IMPORTED_MODULE_24__/* .logAction */ .d5)('Dismissed previous CHANGES_REQUESTED review');
         }
         catch (error) {
             _sentry_js__WEBPACK_IMPORTED_MODULE_2__/* .Sentry.captureException */ .sQ.captureException(error, { tags: { operation: 'dismiss_review' } });
             if (options.failOnWriteError) {
                 throw new ReportWriteError('Failed to dismiss previous review', error);
             }
-            (0,_cli_output_tty_js__WEBPACK_IMPORTED_MODULE_22__/* .warnAction */ .T6)(`Failed to dismiss previous review: ${error}`);
+            (0,_cli_output_tty_js__WEBPACK_IMPORTED_MODULE_24__/* .warnAction */ .T6)(`Failed to dismiss previous review: ${error}`);
         }
     }
 }
@@ -3294,37 +3524,37 @@ async function dismissPreviousReviewIfResolved(octokit, context, previousReviewI
 async function finalizeWorkflow(octokit, context, previousReviewInfo, coreCheckId, results, reports, findingObservations, shouldFailAction, failureReasons, canResolveStale, triggerErrors) {
     await dismissPreviousReviewIfResolved(octokit, context, previousReviewInfo, results, canResolveStale);
     // Set outputs
-    const outputs = (0,_base_js__WEBPACK_IMPORTED_MODULE_19__/* .computeWorkflowOutputs */ .dV)(reports);
-    (0,_base_js__WEBPACK_IMPORTED_MODULE_19__/* .setWorkflowOutputs */ .wZ)(outputs);
+    const outputs = (0,_base_js__WEBPACK_IMPORTED_MODULE_21__/* .computeWorkflowOutputs */ .dV)(reports);
+    (0,_base_js__WEBPACK_IMPORTED_MODULE_21__/* .setWorkflowOutputs */ .wZ)(outputs);
     // Write structured findings to file for external export (GCS, S3, etc.)
     try {
-        const findingsPath = (0,_base_js__WEBPACK_IMPORTED_MODULE_19__/* .writeFindingsOutput */ .JR)(reports, context, findingObservations, {
+        const findingsPath = (0,_base_js__WEBPACK_IMPORTED_MODULE_21__/* .writeFindingsOutput */ .JR)(reports, context, findingObservations, {
             triggerResults: toReplayTriggerResults(results),
         });
-        (0,_cli_output_tty_js__WEBPACK_IMPORTED_MODULE_22__/* .logAction */ .d5)(`Findings written to ${findingsPath}`);
+        (0,_cli_output_tty_js__WEBPACK_IMPORTED_MODULE_24__/* .logAction */ .d5)(`Findings written to ${findingsPath}`);
     }
     catch (error) {
-        (0,_cli_output_tty_js__WEBPACK_IMPORTED_MODULE_22__/* .warnAction */ .T6)(`Failed to write findings output: ${error}`);
+        (0,_cli_output_tty_js__WEBPACK_IMPORTED_MODULE_24__/* .warnAction */ .T6)(`Failed to write findings output: ${error}`);
     }
     // Update core check with overall summary
     if (coreCheckId && context.pullRequest) {
         try {
-            const summaryData = (0,_checks_manager_js__WEBPACK_IMPORTED_MODULE_18__/* .buildCoreSummaryData */ .YX)(results, reports);
-            const coreConclusion = (0,_checks_manager_js__WEBPACK_IMPORTED_MODULE_18__/* .determineCoreConclusion */ .ar)(shouldFailAction || triggerErrors.length > 0, outputs.findingsCount);
-            await (0,_checks_manager_js__WEBPACK_IMPORTED_MODULE_18__/* .updateCoreCheck */ .R2)(octokit, coreCheckId, summaryData, coreConclusion, {
+            const summaryData = (0,_checks_manager_js__WEBPACK_IMPORTED_MODULE_20__/* .buildCoreSummaryData */ .YX)(results, reports);
+            const coreConclusion = (0,_checks_manager_js__WEBPACK_IMPORTED_MODULE_20__/* .determineCoreConclusion */ .ar)(shouldFailAction || triggerErrors.length > 0, outputs.findingsCount);
+            await (0,_checks_manager_js__WEBPACK_IMPORTED_MODULE_20__/* .updateCoreCheck */ .R2)(octokit, coreCheckId, summaryData, coreConclusion, {
                 owner: context.repository.owner,
                 repo: context.repository.name,
             });
         }
         catch (error) {
             _sentry_js__WEBPACK_IMPORTED_MODULE_2__/* .Sentry.captureException */ .sQ.captureException(error, { tags: { operation: 'update_core_check' } });
-            (0,_cli_output_tty_js__WEBPACK_IMPORTED_MODULE_22__/* .warnAction */ .T6)(`Failed to update core check: ${error}`);
+            (0,_cli_output_tty_js__WEBPACK_IMPORTED_MODULE_24__/* .warnAction */ .T6)(`Failed to update core check: ${error}`);
         }
     }
     if (shouldFailAction) {
-        (0,_base_js__WEBPACK_IMPORTED_MODULE_19__/* .setFailed */ .C1)(failureReasons.join('; '));
+        (0,_base_js__WEBPACK_IMPORTED_MODULE_21__/* .setFailed */ .C1)(failureReasons.join('; '));
     }
-    (0,_cli_output_tty_js__WEBPACK_IMPORTED_MODULE_22__/* .logAction */ .d5)(`Analysis complete: ${outputs.findingsCount} total findings`);
+    (0,_cli_output_tty_js__WEBPACK_IMPORTED_MODULE_24__/* .logAction */ .d5)(`Analysis complete: ${outputs.findingsCount} total findings`);
 }
 /** Complete the core check for a PR run that intentionally skipped analysis. */
 async function completeSkippedCoreCheck(octokit, context, coreCheckId, skipped) {
@@ -3333,15 +3563,15 @@ async function completeSkippedCoreCheck(octokit, context, coreCheckId, skipped) 
         return;
     }
     try {
-        await (0,_checks_manager_js__WEBPACK_IMPORTED_MODULE_18__/* .updateCoreCheck */ .R2)(octokit, coreCheckId, {
-            ...(0,_checks_manager_js__WEBPACK_IMPORTED_MODULE_18__/* .buildCoreSummaryData */ .YX)([], []),
+        await (0,_checks_manager_js__WEBPACK_IMPORTED_MODULE_20__/* .updateCoreCheck */ .R2)(octokit, coreCheckId, {
+            ...(0,_checks_manager_js__WEBPACK_IMPORTED_MODULE_20__/* .buildCoreSummaryData */ .YX)([], []),
             title: skipped.title,
             message: skipped.message,
         }, 'neutral', options);
     }
     catch (error) {
         _sentry_js__WEBPACK_IMPORTED_MODULE_2__/* .Sentry.captureException */ .sQ.captureException(error, { tags: { operation: 'update_core_check_skipped' } });
-        (0,_cli_output_tty_js__WEBPACK_IMPORTED_MODULE_22__/* .warnAction */ .T6)(`Failed to update core check: ${error}`);
+        (0,_cli_output_tty_js__WEBPACK_IMPORTED_MODULE_24__/* .warnAction */ .T6)(`Failed to update core check: ${error}`);
     }
 }
 /** Complete per-skill checks for configured PR triggers that did not run. */
@@ -3352,8 +3582,8 @@ async function completeSkippedSkillChecks(octokit, context, skippedTriggers) {
     }
     for (const trigger of skippedTriggers) {
         try {
-            const skillCheck = await (0,_checks_manager_js__WEBPACK_IMPORTED_MODULE_18__/* .createSkillCheck */ .uP)(octokit, trigger.skill, options);
-            await (0,_checks_manager_js__WEBPACK_IMPORTED_MODULE_18__/* .updateSkillCheck */ .Zv)(octokit, skillCheck.checkRunId, {
+            const skillCheck = await (0,_checks_manager_js__WEBPACK_IMPORTED_MODULE_20__/* .createSkillCheck */ .uP)(octokit, trigger.skill, options);
+            await (0,_checks_manager_js__WEBPACK_IMPORTED_MODULE_20__/* .updateSkillCheck */ .Zv)(octokit, skillCheck.checkRunId, {
                 skill: trigger.skill,
                 summary: 'Trigger did not run for this event.',
                 findings: [],
@@ -3375,7 +3605,7 @@ async function completeSkippedSkillChecks(octokit, context, skippedTriggers) {
                     skill_name: trigger.skill,
                 },
             });
-            (0,_cli_output_tty_js__WEBPACK_IMPORTED_MODULE_22__/* .warnAction */ .T6)(`Failed to update skipped skill check for ${trigger.skill}: ${error}`);
+            (0,_cli_output_tty_js__WEBPACK_IMPORTED_MODULE_24__/* .warnAction */ .T6)(`Failed to update skipped skill check for ${trigger.skill}: ${error}`);
         }
     }
 }
@@ -3389,8 +3619,8 @@ async function failUndispatchedSkillChecks(octokit, context, triggers, error) {
     }
     for (const trigger of triggers) {
         try {
-            const skillCheck = await (0,_checks_manager_js__WEBPACK_IMPORTED_MODULE_18__/* .createSkillCheck */ .uP)(octokit, trigger.skill, options);
-            await (0,_checks_manager_js__WEBPACK_IMPORTED_MODULE_18__/* .failSkillCheck */ .OZ)(octokit, skillCheck.checkRunId, error, options);
+            const skillCheck = await (0,_checks_manager_js__WEBPACK_IMPORTED_MODULE_20__/* .createSkillCheck */ .uP)(octokit, trigger.skill, options);
+            await (0,_checks_manager_js__WEBPACK_IMPORTED_MODULE_20__/* .failSkillCheck */ .OZ)(octokit, skillCheck.checkRunId, error, options);
         }
         catch (checkError) {
             _sentry_js__WEBPACK_IMPORTED_MODULE_2__/* .Sentry.captureException */ .sQ.captureException(checkError, {
@@ -3400,7 +3630,7 @@ async function failUndispatchedSkillChecks(octokit, context, triggers, error) {
                     skill_name: trigger.skill,
                 },
             });
-            (0,_cli_output_tty_js__WEBPACK_IMPORTED_MODULE_22__/* .warnAction */ .T6)(`Failed to mark skill check as failed for ${trigger.skill}: ${checkError}`);
+            (0,_cli_output_tty_js__WEBPACK_IMPORTED_MODULE_24__/* .warnAction */ .T6)(`Failed to mark skill check as failed for ${trigger.skill}: ${checkError}`);
         }
     }
 }
@@ -3414,15 +3644,15 @@ async function failCoreCheck(octokit, context, coreCheckId, error) {
     }
     const errorMessage = error instanceof Error ? error.message : String(error);
     try {
-        await (0,_checks_manager_js__WEBPACK_IMPORTED_MODULE_18__/* .updateCoreCheck */ .R2)(octokit, coreCheckId, {
-            ...(0,_checks_manager_js__WEBPACK_IMPORTED_MODULE_18__/* .buildCoreSummaryData */ .YX)([], []),
+        await (0,_checks_manager_js__WEBPACK_IMPORTED_MODULE_20__/* .updateCoreCheck */ .R2)(octokit, coreCheckId, {
+            ...(0,_checks_manager_js__WEBPACK_IMPORTED_MODULE_20__/* .buildCoreSummaryData */ .YX)([], []),
             title: 'Warden failed',
             message: `Error: ${errorMessage}`,
         }, 'failure', options);
     }
     catch (checkError) {
         _sentry_js__WEBPACK_IMPORTED_MODULE_2__/* .Sentry.captureException */ .sQ.captureException(checkError, { tags: { operation: 'fail_core_check' } });
-        (0,_cli_output_tty_js__WEBPACK_IMPORTED_MODULE_22__/* .warnAction */ .T6)(`Failed to mark core check as failed: ${checkError}`);
+        (0,_cli_output_tty_js__WEBPACK_IMPORTED_MODULE_24__/* .warnAction */ .T6)(`Failed to mark core check as failed: ${checkError}`);
     }
 }
 async function runOrFailCore(octokit, context, coreCheckId, operation) {
@@ -3436,7 +3666,7 @@ async function runOrFailCore(octokit, context, coreCheckId, operation) {
 }
 function resolveFindingsFilePath(inputPath, repoPath) {
     if (!inputPath) {
-        (0,_base_js__WEBPACK_IMPORTED_MODULE_19__/* .setFailed */ .C1)('findings-file is required when mode is report');
+        (0,_base_js__WEBPACK_IMPORTED_MODULE_21__/* .setFailed */ .C1)('findings-file is required when mode is report');
     }
     return (0,node_path__WEBPACK_IMPORTED_MODULE_1__.isAbsolute)(inputPath) ? inputPath : (0,node_path__WEBPACK_IMPORTED_MODULE_1__.join)(repoPath, inputPath);
 }
@@ -3446,10 +3676,10 @@ function resolveFindingsFilePath(inputPath, repoPath) {
 function readFindingsFile(inputPath, repoPath) {
     const filePath = resolveFindingsFilePath(inputPath, repoPath);
     try {
-        return _reporting_output_js__WEBPACK_IMPORTED_MODULE_21__/* .FindingsOutputSchema */ .DF.parse(JSON.parse((0,node_fs__WEBPACK_IMPORTED_MODULE_0__.readFileSync)(filePath, 'utf-8')));
+        return _reporting_output_js__WEBPACK_IMPORTED_MODULE_23__/* .FindingsOutputSchema */ .DF.parse(JSON.parse((0,node_fs__WEBPACK_IMPORTED_MODULE_0__.readFileSync)(filePath, 'utf-8')));
     }
     catch (error) {
-        (0,_base_js__WEBPACK_IMPORTED_MODULE_19__/* .setFailed */ .C1)(`Failed to read findings file ${filePath}: ${error}`);
+        (0,_base_js__WEBPACK_IMPORTED_MODULE_21__/* .setFailed */ .C1)(`Failed to read findings file ${filePath}: ${error}`);
     }
 }
 /**
@@ -3458,22 +3688,22 @@ function readFindingsFile(inputPath, repoPath) {
  */
 function validateFindingsMatchContext(output, context) {
     if (output.repository.fullName !== context.repository.fullName) {
-        (0,_base_js__WEBPACK_IMPORTED_MODULE_19__/* .setFailed */ .C1)(`Findings file is for ${output.repository.fullName}, but this workflow is for ${context.repository.fullName}`);
+        (0,_base_js__WEBPACK_IMPORTED_MODULE_21__/* .setFailed */ .C1)(`Findings file is for ${output.repository.fullName}, but this workflow is for ${context.repository.fullName}`);
     }
     if (output.event !== context.eventType) {
-        (0,_base_js__WEBPACK_IMPORTED_MODULE_19__/* .setFailed */ .C1)(`Findings file event ${output.event} does not match ${context.eventType}`);
+        (0,_base_js__WEBPACK_IMPORTED_MODULE_21__/* .setFailed */ .C1)(`Findings file event ${output.event} does not match ${context.eventType}`);
     }
     if (!context.pullRequest) {
         return;
     }
     if (!output.pullRequest) {
-        (0,_base_js__WEBPACK_IMPORTED_MODULE_19__/* .setFailed */ .C1)('Findings file is missing pull request metadata');
+        (0,_base_js__WEBPACK_IMPORTED_MODULE_21__/* .setFailed */ .C1)('Findings file is missing pull request metadata');
     }
     if (output.pullRequest.number !== context.pullRequest.number) {
-        (0,_base_js__WEBPACK_IMPORTED_MODULE_19__/* .setFailed */ .C1)(`Findings file is for PR #${output.pullRequest.number}, but this workflow is for PR #${context.pullRequest.number}`);
+        (0,_base_js__WEBPACK_IMPORTED_MODULE_21__/* .setFailed */ .C1)(`Findings file is for PR #${output.pullRequest.number}, but this workflow is for PR #${context.pullRequest.number}`);
     }
     if (output.pullRequest.headSha !== context.pullRequest.headSha) {
-        (0,_base_js__WEBPACK_IMPORTED_MODULE_19__/* .setFailed */ .C1)(`Findings file head SHA ${output.pullRequest.headSha} does not match current head SHA ${context.pullRequest.headSha}`);
+        (0,_base_js__WEBPACK_IMPORTED_MODULE_21__/* .setFailed */ .C1)(`Findings file head SHA ${output.pullRequest.headSha} does not match current head SHA ${context.pullRequest.headSha}`);
     }
 }
 function deserializeTriggerError(error, fallback) {
@@ -3510,7 +3740,7 @@ function toReplayTriggerResults(results) {
  */
 function buildReportModeResults(output, matchedTriggers, inputs) {
     if (!output.triggerResults) {
-        (0,_base_js__WEBPACK_IMPORTED_MODULE_19__/* .setFailed */ .C1)('Findings file was not produced by mode: analyze; missing triggerResults');
+        (0,_base_js__WEBPACK_IMPORTED_MODULE_21__/* .setFailed */ .C1)('Findings file was not produced by mode: analyze; missing triggerResults');
     }
     const outputResults = new Map();
     for (const result of output.triggerResults) {
@@ -3561,6 +3791,7 @@ function buildReportModeResults(output, matchedTriggers, inputs) {
         const reportOn = trigger.reportOn ?? inputs.reportOn;
         const minConfidence = trigger.minConfidence ?? 'medium';
         const requestChanges = trigger.requestChanges ?? inputs.requestChanges;
+        const suggestions = trigger.suggestions ?? false;
         const failCheck = trigger.failCheck ?? inputs.failCheck;
         const maxFindings = trigger.maxFindings ?? inputs.maxFindings;
         const baseResult = {
@@ -3572,6 +3803,7 @@ function buildReportModeResults(output, matchedTriggers, inputs) {
             minConfidence,
             reportOnSuccess: trigger.reportOnSuccess,
             requestChanges,
+            suggestions,
             failCheck,
             maxFindings,
         };
@@ -3610,12 +3842,13 @@ function withRenderedReviewResult(result) {
     return {
         ...result,
         renderResult: result.reportOn !== 'off'
-            ? (0,_output_renderer_js__WEBPACK_IMPORTED_MODULE_20__/* .renderSkillReport */ .K)(result.report, {
+            ? (0,_output_renderer_js__WEBPACK_IMPORTED_MODULE_22__/* .renderSkillReport */ .K)(result.report, {
                 maxFindings: result.maxFindings,
                 reportOn: result.reportOn,
                 minConfidence: result.minConfidence,
                 failOn: result.failOn,
                 requestChanges: result.requestChanges,
+                suggestions: result.suggestions,
                 checkRunUrl: result.checkRunUrl,
                 totalFindings: result.report.findings.length,
             })
@@ -3633,7 +3866,7 @@ async function createCompletedSkillChecksForReport(octokit, context, results) {
     const updatedResults = [];
     for (const result of results) {
         if (result.report) {
-            const check = await (0,_checks_manager_js__WEBPACK_IMPORTED_MODULE_18__/* .createCompletedSkillCheck */ .$R)(octokit, result.report, {
+            const check = await (0,_checks_manager_js__WEBPACK_IMPORTED_MODULE_20__/* .createCompletedSkillCheck */ .$R)(octokit, result.report, {
                 ...options,
                 checkName: result.skillName,
                 failOn: result.failOn,
@@ -3644,7 +3877,7 @@ async function createCompletedSkillChecksForReport(octokit, context, results) {
             updatedResults.push(withRenderedReviewResult({ ...result, checkRunUrl: check.url }));
             continue;
         }
-        await (0,_checks_manager_js__WEBPACK_IMPORTED_MODULE_18__/* .createFailedSkillCheck */ .xB)(octokit, result.skillName, result.error ?? new Error('Trigger did not produce a report'), options);
+        await (0,_checks_manager_js__WEBPACK_IMPORTED_MODULE_20__/* .createFailedSkillCheck */ .xB)(octokit, result.skillName, result.error ?? new Error('Trigger did not produce a report'), options);
         updatedResults.push(result);
     }
     return updatedResults;
@@ -3658,7 +3891,7 @@ async function createCompletedSkippedSkillChecks(octokit, context, skippedTrigge
         return;
     }
     for (const trigger of skippedTriggers) {
-        await (0,_checks_manager_js__WEBPACK_IMPORTED_MODULE_18__/* .createCompletedSkillCheck */ .$R)(octokit, {
+        await (0,_checks_manager_js__WEBPACK_IMPORTED_MODULE_20__/* .createCompletedSkillCheck */ .$R)(octokit, {
             skill: trigger.skill,
             summary: 'Trigger did not run for this event.',
             findings: [],
@@ -3681,10 +3914,10 @@ async function createCompletedCoreCheckForReport(octokit, context, results, repo
     if (!options) {
         return;
     }
-    await (0,_checks_manager_js__WEBPACK_IMPORTED_MODULE_18__/* .createCompletedCoreCheck */ .RR)(octokit, {
-        ...(0,_checks_manager_js__WEBPACK_IMPORTED_MODULE_18__/* .buildCoreSummaryData */ .YX)(results, reports),
+    await (0,_checks_manager_js__WEBPACK_IMPORTED_MODULE_20__/* .createCompletedCoreCheck */ .RR)(octokit, {
+        ...(0,_checks_manager_js__WEBPACK_IMPORTED_MODULE_20__/* .buildCoreSummaryData */ .YX)(results, reports),
         ...overrides,
-    }, conclusion ?? (0,_checks_manager_js__WEBPACK_IMPORTED_MODULE_18__/* .determineCoreConclusion */ .ar)(shouldFailAction, outputs.findingsCount), options);
+    }, conclusion ?? (0,_checks_manager_js__WEBPACK_IMPORTED_MODULE_20__/* .determineCoreConclusion */ .ar)(shouldFailAction, outputs.findingsCount), options);
 }
 /**
  * Create the report-mode core failure check directly as a completed check run.
@@ -3699,7 +3932,7 @@ async function createFailedCoreCheckForReport(octokit, context, error) {
     }
     catch (checkError) {
         _sentry_js__WEBPACK_IMPORTED_MODULE_2__/* .Sentry.captureException */ .sQ.captureException(checkError, { tags: { operation: 'create_failed_core_check_report' } });
-        (0,_cli_output_tty_js__WEBPACK_IMPORTED_MODULE_22__/* .warnAction */ .T6)(`Failed to create failed core check: ${checkError}`);
+        (0,_cli_output_tty_js__WEBPACK_IMPORTED_MODULE_24__/* .warnAction */ .T6)(`Failed to create failed core check: ${checkError}`);
     }
 }
 /**
@@ -3708,22 +3941,22 @@ async function createFailedCoreCheckForReport(octokit, context, error) {
  */
 async function finalizeReportWorkflow(octokit, context, previousReviewInfo, results, reports, findingObservations, shouldFailAction, failureReasons, canResolveStale, triggerErrors, options = {}) {
     await dismissPreviousReviewIfResolved(octokit, context, previousReviewInfo, results, canResolveStale, { failOnWriteError: options.failOnWriteError });
-    const outputs = (0,_base_js__WEBPACK_IMPORTED_MODULE_19__/* .computeWorkflowOutputs */ .dV)(reports);
-    (0,_base_js__WEBPACK_IMPORTED_MODULE_19__/* .setWorkflowOutputs */ .wZ)(outputs);
+    const outputs = (0,_base_js__WEBPACK_IMPORTED_MODULE_21__/* .computeWorkflowOutputs */ .dV)(reports);
+    (0,_base_js__WEBPACK_IMPORTED_MODULE_21__/* .setWorkflowOutputs */ .wZ)(outputs);
     try {
-        const findingsPath = (0,_base_js__WEBPACK_IMPORTED_MODULE_19__/* .writeFindingsOutput */ .JR)(reports, context, findingObservations, {
+        const findingsPath = (0,_base_js__WEBPACK_IMPORTED_MODULE_21__/* .writeFindingsOutput */ .JR)(reports, context, findingObservations, {
             triggerResults: toReplayTriggerResults(results),
         });
-        (0,_cli_output_tty_js__WEBPACK_IMPORTED_MODULE_22__/* .logAction */ .d5)(`Findings written to ${findingsPath}`);
+        (0,_cli_output_tty_js__WEBPACK_IMPORTED_MODULE_24__/* .logAction */ .d5)(`Findings written to ${findingsPath}`);
     }
     catch (error) {
-        (0,_cli_output_tty_js__WEBPACK_IMPORTED_MODULE_22__/* .warnAction */ .T6)(`Failed to write findings output: ${error}`);
+        (0,_cli_output_tty_js__WEBPACK_IMPORTED_MODULE_24__/* .warnAction */ .T6)(`Failed to write findings output: ${error}`);
     }
     await createCompletedCoreCheckForReport(octokit, context, results, reports, shouldFailAction || triggerErrors.length > 0, outputs);
     if (shouldFailAction) {
-        (0,_base_js__WEBPACK_IMPORTED_MODULE_19__/* .setFailed */ .C1)(failureReasons.join('; '));
+        (0,_base_js__WEBPACK_IMPORTED_MODULE_21__/* .setFailed */ .C1)(failureReasons.join('; '));
     }
-    (0,_cli_output_tty_js__WEBPACK_IMPORTED_MODULE_22__/* .logAction */ .d5)(`Analysis complete: ${outputs.findingsCount} total findings`);
+    (0,_cli_output_tty_js__WEBPACK_IMPORTED_MODULE_24__/* .logAction */ .d5)(`Analysis complete: ${outputs.findingsCount} total findings`);
 }
 /**
  * Clean up orphaned Warden comments when no triggers matched.
@@ -3741,7 +3974,7 @@ async function cleanupOrphanedComments(octokit, context, inputs, auxiliaryOption
         existingComments = await (0,_output_dedup_js__WEBPACK_IMPORTED_MODULE_7__/* .fetchExistingComments */ .kX)(octokit, context.repository.owner, context.repository.name, context.pullRequest.number);
     }
     catch (error) {
-        (0,_cli_output_tty_js__WEBPACK_IMPORTED_MODULE_22__/* .warnAction */ .T6)(`Failed to fetch existing comments for cleanup: ${error}`);
+        (0,_cli_output_tty_js__WEBPACK_IMPORTED_MODULE_24__/* .warnAction */ .T6)(`Failed to fetch existing comments for cleanup: ${error}`);
         return [];
     }
     const wardenComments = existingComments.filter((c) => c.isWarden);
@@ -3749,9 +3982,9 @@ async function cleanupOrphanedComments(octokit, context, inputs, auxiliaryOption
         return [];
     }
     if ((auxiliaryOptions.runtime ?? 'pi') === 'claude') {
-        (0,_base_js__WEBPACK_IMPORTED_MODULE_19__/* .ensureClaudeAuth */ .$m)(inputs);
+        (0,_base_js__WEBPACK_IMPORTED_MODULE_21__/* .ensureClaudeAuth */ .$m)(inputs);
     }
-    (0,_cli_output_tty_js__WEBPACK_IMPORTED_MODULE_22__/* .logAction */ .d5)(`No triggers matched, but found ${wardenComments.length} existing Warden comments. Running cleanup.`);
+    (0,_cli_output_tty_js__WEBPACK_IMPORTED_MODULE_24__/* .logAction */ .d5)(`No triggers matched, but found ${wardenComments.length} existing Warden comments. Running cleanup.`);
     const { allResolved, autoResolvedByFixEvaluation, autoResolvedByStaleCheck, findingObservations } = await evaluateFixesAndResolveStale(octokit, context, existingComments, [], new Set(), true, inputs.anthropicApiKey, auxiliaryOptions, {
         failOnWriteError: options.failOnWriteError,
     });
@@ -3770,10 +4003,10 @@ async function cleanupOrphanedComments(octokit, context, inputs, auxiliaryOption
                     review_id: previousReviewInfo.reviewId,
                     message: 'All previously reported issues have been resolved.',
                 });
-                (0,_cli_output_tty_js__WEBPACK_IMPORTED_MODULE_22__/* .logAction */ .d5)('Dismissed previous CHANGES_REQUESTED review');
+                (0,_cli_output_tty_js__WEBPACK_IMPORTED_MODULE_24__/* .logAction */ .d5)('Dismissed previous CHANGES_REQUESTED review');
             }
             catch (error) {
-                (0,_cli_output_tty_js__WEBPACK_IMPORTED_MODULE_22__/* .warnAction */ .T6)(`Failed to dismiss previous review: ${error}`);
+                (0,_cli_output_tty_js__WEBPACK_IMPORTED_MODULE_24__/* .warnAction */ .T6)(`Failed to dismiss previous review: ${error}`);
                 if (options.failOnWriteError) {
                     throw new ReportWriteError('Failed to dismiss previous review', error);
                 }
@@ -3787,41 +4020,42 @@ async function cleanupOrphanedComments(octokit, context, inputs, auxiliaryOption
  * It executes matched triggers and writes the replay artifact for report mode.
  */
 async function runAnalyzeMode(inputs, initResult, span) {
-    const { context, runnerConcurrency, matchedTriggers, skipCoreCheck, } = initResult;
+    const { context, runnerConcurrency, matchedTriggers, skipCoreCheck, mcpServers, } = initResult;
     if (skipCoreCheck || matchedTriggers.length === 0) {
-        (0,_base_js__WEBPACK_IMPORTED_MODULE_19__/* .setOutput */ .uH)('findings-count', 0);
-        (0,_base_js__WEBPACK_IMPORTED_MODULE_19__/* .setOutput */ .uH)('high-count', 0);
-        (0,_base_js__WEBPACK_IMPORTED_MODULE_19__/* .setOutput */ .uH)('summary', skipCoreCheck?.title ?? 'No triggers matched');
+        (0,_base_js__WEBPACK_IMPORTED_MODULE_21__/* .setOutput */ .uH)('findings-count', 0);
+        (0,_base_js__WEBPACK_IMPORTED_MODULE_21__/* .setOutput */ .uH)('high-count', 0);
+        (0,_base_js__WEBPACK_IMPORTED_MODULE_21__/* .setOutput */ .uH)('summary', skipCoreCheck?.title ?? 'No triggers matched');
         try {
-            const findingsPath = (0,_base_js__WEBPACK_IMPORTED_MODULE_19__/* .writeFindingsOutput */ .JR)([], context, [], { triggerResults: [] });
-            (0,_cli_output_tty_js__WEBPACK_IMPORTED_MODULE_22__/* .logAction */ .d5)(`Findings written to ${findingsPath}`);
+            const findingsPath = (0,_base_js__WEBPACK_IMPORTED_MODULE_21__/* .writeFindingsOutput */ .JR)([], context, [], { triggerResults: [] });
+            (0,_cli_output_tty_js__WEBPACK_IMPORTED_MODULE_24__/* .logAction */ .d5)(`Findings written to ${findingsPath}`);
         }
         catch (error) {
-            (0,_base_js__WEBPACK_IMPORTED_MODULE_19__/* .setFailed */ .C1)(`Failed to write findings output: ${error}`);
+            (0,_base_js__WEBPACK_IMPORTED_MODULE_21__/* .setFailed */ .C1)(`Failed to write findings output: ${error}`);
         }
-        (0,_cli_output_tty_js__WEBPACK_IMPORTED_MODULE_22__/* .logAction */ .d5)('Analysis complete: 0 total findings');
+        (0,_cli_output_tty_js__WEBPACK_IMPORTED_MODULE_24__/* .logAction */ .d5)('Analysis complete: 0 total findings');
         return;
     }
     const results = await _sentry_js__WEBPACK_IMPORTED_MODULE_2__/* .Sentry.startSpan */ .sQ.startSpan({
         op: 'workflow.execute',
         name: 'execute triggers',
         attributes: { 'warden.trigger.count': matchedTriggers.length },
-    }, () => executeAllTriggers(matchedTriggers, context, runnerConcurrency, inputs));
+    }, () => executeAllTriggers(matchedTriggers, context, runnerConcurrency, inputs, { mcpServers }));
+    await _sdk_runtimes_index_js__WEBPACK_IMPORTED_MODULE_17__/* .defaultMcpConnectionManager */ .V8.dispose();
     const reports = results.flatMap((result) => (result.report ? [result.report] : []));
-    const outputs = (0,_base_js__WEBPACK_IMPORTED_MODULE_19__/* .computeWorkflowOutputs */ .dV)(reports);
-    (0,_base_js__WEBPACK_IMPORTED_MODULE_19__/* .setWorkflowOutputs */ .wZ)(outputs);
+    const outputs = (0,_base_js__WEBPACK_IMPORTED_MODULE_21__/* .computeWorkflowOutputs */ .dV)(reports);
+    (0,_base_js__WEBPACK_IMPORTED_MODULE_21__/* .setWorkflowOutputs */ .wZ)(outputs);
     span.setAttribute('warden.finding.count', reports.flatMap((r) => r.findings).length);
     try {
-        const findingsPath = (0,_base_js__WEBPACK_IMPORTED_MODULE_19__/* .writeFindingsOutput */ .JR)(reports, context, [], {
+        const findingsPath = (0,_base_js__WEBPACK_IMPORTED_MODULE_21__/* .writeFindingsOutput */ .JR)(reports, context, [], {
             triggerResults: toReplayTriggerResults(results),
         });
-        (0,_cli_output_tty_js__WEBPACK_IMPORTED_MODULE_22__/* .logAction */ .d5)(`Findings written to ${findingsPath}`);
+        (0,_cli_output_tty_js__WEBPACK_IMPORTED_MODULE_24__/* .logAction */ .d5)(`Findings written to ${findingsPath}`);
     }
     catch (error) {
-        (0,_base_js__WEBPACK_IMPORTED_MODULE_19__/* .setFailed */ .C1)(`Failed to write findings output: ${error}`);
+        (0,_base_js__WEBPACK_IMPORTED_MODULE_21__/* .setFailed */ .C1)(`Failed to write findings output: ${error}`);
     }
-    (0,_base_js__WEBPACK_IMPORTED_MODULE_19__/* .handleTriggerErrors */ .a3)((0,_base_js__WEBPACK_IMPORTED_MODULE_19__/* .collectTriggerErrors */ .sl)(results), matchedTriggers.length, { failAll: false });
-    (0,_cli_output_tty_js__WEBPACK_IMPORTED_MODULE_22__/* .logAction */ .d5)(`Analysis complete: ${outputs.findingsCount} total findings`);
+    (0,_base_js__WEBPACK_IMPORTED_MODULE_21__/* .handleTriggerErrors */ .a3)((0,_base_js__WEBPACK_IMPORTED_MODULE_21__/* .collectTriggerErrors */ .sl)(results), matchedTriggers.length, { failAll: false });
+    (0,_cli_output_tty_js__WEBPACK_IMPORTED_MODULE_24__/* .logAction */ .d5)(`Analysis complete: ${outputs.findingsCount} total findings`);
 }
 /**
  * Run the reporting phase without rerunning skills.
@@ -3841,51 +4075,51 @@ async function runReportMode(octokit, inputs, initResult, repoPath, span) {
         await createCompletedSkippedSkillChecks(octokit, context, skippedTriggers);
         if (skipCoreCheck) {
             const outputs = { findingsCount: 0, highCount: 0, summary: skipCoreCheck.title };
-            (0,_base_js__WEBPACK_IMPORTED_MODULE_19__/* .setWorkflowOutputs */ .wZ)(outputs);
+            (0,_base_js__WEBPACK_IMPORTED_MODULE_21__/* .setWorkflowOutputs */ .wZ)(outputs);
             try {
-                const findingsPath = (0,_base_js__WEBPACK_IMPORTED_MODULE_19__/* .writeFindingsOutput */ .JR)([], context, [], { triggerResults: [] });
-                (0,_cli_output_tty_js__WEBPACK_IMPORTED_MODULE_22__/* .logAction */ .d5)(`Findings written to ${findingsPath}`);
+                const findingsPath = (0,_base_js__WEBPACK_IMPORTED_MODULE_21__/* .writeFindingsOutput */ .JR)([], context, [], { triggerResults: [] });
+                (0,_cli_output_tty_js__WEBPACK_IMPORTED_MODULE_24__/* .logAction */ .d5)(`Findings written to ${findingsPath}`);
             }
             catch (error) {
-                (0,_cli_output_tty_js__WEBPACK_IMPORTED_MODULE_22__/* .warnAction */ .T6)(`Failed to write findings output: ${error}`);
+                (0,_cli_output_tty_js__WEBPACK_IMPORTED_MODULE_24__/* .warnAction */ .T6)(`Failed to write findings output: ${error}`);
             }
             await createCompletedCoreCheckForReport(octokit, context, [], [], false, outputs, {
                 title: skipCoreCheck.title,
                 message: skipCoreCheck.message,
             }, 'neutral');
-            (0,_cli_output_tty_js__WEBPACK_IMPORTED_MODULE_22__/* .logAction */ .d5)('Analysis complete: 0 total findings');
+            (0,_cli_output_tty_js__WEBPACK_IMPORTED_MODULE_24__/* .logAction */ .d5)('Analysis complete: 0 total findings');
             return;
         }
         if (matchedTriggers.length === 0) {
             const cleanupFindingObservations = await cleanupOrphanedComments(octokit, context, inputs, auxiliaryOptions, { failOnWriteError: true });
             const outputs = { findingsCount: 0, highCount: 0, summary: 'No triggers matched' };
-            (0,_base_js__WEBPACK_IMPORTED_MODULE_19__/* .setWorkflowOutputs */ .wZ)(outputs);
+            (0,_base_js__WEBPACK_IMPORTED_MODULE_21__/* .setWorkflowOutputs */ .wZ)(outputs);
             try {
-                const findingsPath = (0,_base_js__WEBPACK_IMPORTED_MODULE_19__/* .writeFindingsOutput */ .JR)([], context, cleanupFindingObservations, {
+                const findingsPath = (0,_base_js__WEBPACK_IMPORTED_MODULE_21__/* .writeFindingsOutput */ .JR)([], context, cleanupFindingObservations, {
                     triggerResults: [],
                 });
-                (0,_cli_output_tty_js__WEBPACK_IMPORTED_MODULE_22__/* .logAction */ .d5)(`Findings written to ${findingsPath}`);
+                (0,_cli_output_tty_js__WEBPACK_IMPORTED_MODULE_24__/* .logAction */ .d5)(`Findings written to ${findingsPath}`);
             }
             catch (error) {
-                (0,_cli_output_tty_js__WEBPACK_IMPORTED_MODULE_22__/* .warnAction */ .T6)(`Failed to write findings output: ${error}`);
+                (0,_cli_output_tty_js__WEBPACK_IMPORTED_MODULE_24__/* .warnAction */ .T6)(`Failed to write findings output: ${error}`);
             }
             await createCompletedCoreCheckForReport(octokit, context, [], [], false, outputs, {
                 title: 'No triggers matched',
                 message: 'No triggers matched for this event.',
             }, 'neutral');
-            (0,_cli_output_tty_js__WEBPACK_IMPORTED_MODULE_22__/* .logAction */ .d5)('Analysis complete: 0 total findings');
+            (0,_cli_output_tty_js__WEBPACK_IMPORTED_MODULE_24__/* .logAction */ .d5)('Analysis complete: 0 total findings');
             return;
         }
         results = await createCompletedSkillChecksForReport(octokit, context, results);
         previousReviewInfo = await fetchPreviousReviewInfo(octokit, context);
         if (previousReviewInfo) {
-            (0,_cli_output_tty_js__WEBPACK_IMPORTED_MODULE_22__/* .logAction */ .d5)(`Previous Warden review state: ${previousReviewInfo.state}`);
+            (0,_cli_output_tty_js__WEBPACK_IMPORTED_MODULE_24__/* .logAction */ .d5)(`Previous Warden review state: ${previousReviewInfo.state}`);
         }
         reviewPhase = await _sentry_js__WEBPACK_IMPORTED_MODULE_2__/* .Sentry.startSpan */ .sQ.startSpan({ op: 'workflow.review', name: 'post reviews' }, () => postReviewsAndTrackFailures(octokit, context, results, inputs, auxiliaryOptions, {
             failOnPostError: true,
         }));
-        triggerErrors = (0,_base_js__WEBPACK_IMPORTED_MODULE_19__/* .collectTriggerErrors */ .sl)(results);
-        canResolveStale = (0,_review_coordination_js__WEBPACK_IMPORTED_MODULE_24__/* .shouldResolveStaleComments */ .t)(results);
+        triggerErrors = (0,_base_js__WEBPACK_IMPORTED_MODULE_21__/* .collectTriggerErrors */ .sl)(results);
+        canResolveStale = (0,_review_coordination_js__WEBPACK_IMPORTED_MODULE_26__/* .shouldResolveStaleComments */ .t)(results);
         const allFindings = reviewPhase.reports.flatMap((r) => r.findings);
         span.setAttribute('warden.finding.count', allFindings.length);
         await _sentry_js__WEBPACK_IMPORTED_MODULE_2__/* .Sentry.startSpan */ .sQ.startSpan({ op: 'workflow.resolve', name: 'resolve stale comments' }, async (resolveSpan) => {
@@ -3897,13 +4131,13 @@ async function runReportMode(octokit, inputs, initResult, repoPath, span) {
         await finalizeReportWorkflow(octokit, context, previousReviewInfo, results, reviewPhase.reports, reviewPhase.findingObservations, reviewPhase.shouldFailAction, reviewPhase.failureReasons, canResolveStale, triggerErrors, { failOnWriteError: true });
     }
     catch (error) {
-        if (error instanceof _base_js__WEBPACK_IMPORTED_MODULE_19__/* .ActionFailedError */ .Ah) {
+        if (error instanceof _base_js__WEBPACK_IMPORTED_MODULE_21__/* .ActionFailedError */ .Ah) {
             throw error;
         }
         await createFailedCoreCheckForReport(octokit, context, error);
         throw error;
     }
-    (0,_base_js__WEBPACK_IMPORTED_MODULE_19__/* .handleTriggerErrors */ .a3)(triggerErrors, matchedTriggers.length);
+    (0,_base_js__WEBPACK_IMPORTED_MODULE_21__/* .handleTriggerErrors */ .a3)(triggerErrors, matchedTriggers.length);
 }
 // -----------------------------------------------------------------------------
 // Main PR Workflow
@@ -3914,7 +4148,7 @@ async function runReportMode(octokit, inputs, initResult, repoPath, span) {
 async function runPRWorkflow(octokit, inputs, eventName, eventPath, repoPath) {
     return _sentry_js__WEBPACK_IMPORTED_MODULE_2__/* .Sentry.startSpan */ .sQ.startSpan({ op: 'workflow.run', name: 'review pull_request' }, async (span) => {
         const initResult = await _sentry_js__WEBPACK_IMPORTED_MODULE_2__/* .Sentry.startSpan */ .sQ.startSpan({ op: 'workflow.init', name: 'initialize workflow' }, () => initializeWorkflow(octokit, inputs, eventName, eventPath, repoPath));
-        const { context, runnerConcurrency, auxiliaryOptions, matchedTriggers, skippedTriggers, skipCoreCheck, } = initResult;
+        const { context, runnerConcurrency, auxiliaryOptions, matchedTriggers, skippedTriggers, skipCoreCheck, mcpServers, } = initResult;
         span.setAttribute('warden.trigger.count', matchedTriggers.length);
         // Set Sentry context after building event context
         if (context.pullRequest) {
@@ -3946,14 +4180,14 @@ async function runPRWorkflow(octokit, inputs, eventName, eventPath, repoPath) {
         const { coreCheckId, previousReviewInfo } = await _sentry_js__WEBPACK_IMPORTED_MODULE_2__/* .Sentry.startSpan */ .sQ.startSpan({ op: 'workflow.setup', name: 'setup github state' }, () => setupGitHubState(octokit, context));
         await completeSkippedSkillChecks(octokit, context, skippedTriggers);
         if (skipCoreCheck) {
-            (0,_base_js__WEBPACK_IMPORTED_MODULE_19__/* .setOutput */ .uH)('findings-count', 0);
-            (0,_base_js__WEBPACK_IMPORTED_MODULE_19__/* .setOutput */ .uH)('high-count', 0);
-            (0,_base_js__WEBPACK_IMPORTED_MODULE_19__/* .setOutput */ .uH)('summary', skipCoreCheck.title);
+            (0,_base_js__WEBPACK_IMPORTED_MODULE_21__/* .setOutput */ .uH)('findings-count', 0);
+            (0,_base_js__WEBPACK_IMPORTED_MODULE_21__/* .setOutput */ .uH)('high-count', 0);
+            (0,_base_js__WEBPACK_IMPORTED_MODULE_21__/* .setOutput */ .uH)('summary', skipCoreCheck.title);
             try {
-                (0,_base_js__WEBPACK_IMPORTED_MODULE_19__/* .writeFindingsOutput */ .JR)([], context);
+                (0,_base_js__WEBPACK_IMPORTED_MODULE_21__/* .writeFindingsOutput */ .JR)([], context);
             }
             catch (error) {
-                (0,_cli_output_tty_js__WEBPACK_IMPORTED_MODULE_22__/* .warnAction */ .T6)(`Failed to write findings output: ${error}`);
+                (0,_cli_output_tty_js__WEBPACK_IMPORTED_MODULE_24__/* .warnAction */ .T6)(`Failed to write findings output: ${error}`);
             }
             await completeSkippedCoreCheck(octokit, context, coreCheckId, skipCoreCheck);
             return;
@@ -3961,14 +4195,14 @@ async function runPRWorkflow(octokit, inputs, eventName, eventPath, repoPath) {
         if (matchedTriggers.length === 0) {
             await runOrFailCore(octokit, context, coreCheckId, async () => {
                 const cleanupFindingObservations = await cleanupOrphanedComments(octokit, context, inputs, auxiliaryOptions);
-                (0,_base_js__WEBPACK_IMPORTED_MODULE_19__/* .setOutput */ .uH)('findings-count', 0);
-                (0,_base_js__WEBPACK_IMPORTED_MODULE_19__/* .setOutput */ .uH)('high-count', 0);
-                (0,_base_js__WEBPACK_IMPORTED_MODULE_19__/* .setOutput */ .uH)('summary', 'No triggers matched');
+                (0,_base_js__WEBPACK_IMPORTED_MODULE_21__/* .setOutput */ .uH)('findings-count', 0);
+                (0,_base_js__WEBPACK_IMPORTED_MODULE_21__/* .setOutput */ .uH)('high-count', 0);
+                (0,_base_js__WEBPACK_IMPORTED_MODULE_21__/* .setOutput */ .uH)('summary', 'No triggers matched');
                 try {
-                    (0,_base_js__WEBPACK_IMPORTED_MODULE_19__/* .writeFindingsOutput */ .JR)([], context, cleanupFindingObservations);
+                    (0,_base_js__WEBPACK_IMPORTED_MODULE_21__/* .writeFindingsOutput */ .JR)([], context, cleanupFindingObservations);
                 }
                 catch (error) {
-                    (0,_cli_output_tty_js__WEBPACK_IMPORTED_MODULE_22__/* .warnAction */ .T6)(`Failed to write findings output: ${error}`);
+                    (0,_cli_output_tty_js__WEBPACK_IMPORTED_MODULE_24__/* .warnAction */ .T6)(`Failed to write findings output: ${error}`);
                 }
                 await completeSkippedCoreCheck(octokit, context, coreCheckId, {
                     title: 'No triggers matched',
@@ -3985,6 +4219,7 @@ async function runPRWorkflow(octokit, inputs, eventName, eventPath, repoPath) {
                 attributes: { 'warden.trigger.count': matchedTriggers.length },
             }, () => executeAllTriggers(matchedTriggers, context, runnerConcurrency, inputs, {
                 checks: createTriggerCheckReporter(octokit, context),
+                mcpServers,
             }));
         }
         catch (error) {
@@ -3992,9 +4227,14 @@ async function runPRWorkflow(octokit, inputs, eventName, eventPath, repoPath) {
             await failCoreCheck(octokit, context, coreCheckId, error);
             throw error;
         }
+        finally {
+            // Close any MCP connections opened during skill analysis before the
+            // review phase (which runs on the auxiliary lane only).
+            await _sdk_runtimes_index_js__WEBPACK_IMPORTED_MODULE_17__/* .defaultMcpConnectionManager */ .V8.dispose();
+        }
         const reviewPhase = await runOrFailCore(octokit, context, coreCheckId, () => _sentry_js__WEBPACK_IMPORTED_MODULE_2__/* .Sentry.startSpan */ .sQ.startSpan({ op: 'workflow.review', name: 'post reviews' }, () => postReviewsAndTrackFailures(octokit, context, results, inputs, auxiliaryOptions)));
-        const triggerErrors = (0,_base_js__WEBPACK_IMPORTED_MODULE_19__/* .collectTriggerErrors */ .sl)(results);
-        const canResolveStale = (0,_review_coordination_js__WEBPACK_IMPORTED_MODULE_24__/* .shouldResolveStaleComments */ .t)(results);
+        const triggerErrors = (0,_base_js__WEBPACK_IMPORTED_MODULE_21__/* .collectTriggerErrors */ .sl)(results);
+        const canResolveStale = (0,_review_coordination_js__WEBPACK_IMPORTED_MODULE_26__/* .shouldResolveStaleComments */ .t)(results);
         const allFindings = reviewPhase.reports.flatMap((r) => r.findings);
         span.setAttribute('warden.finding.count', allFindings.length);
         await runOrFailCore(octokit, context, coreCheckId, () => _sentry_js__WEBPACK_IMPORTED_MODULE_2__/* .Sentry.startSpan */ .sQ.startSpan({ op: 'workflow.resolve', name: 'resolve stale comments' }, async (resolveSpan) => {
@@ -4004,7 +4244,7 @@ async function runPRWorkflow(octokit, inputs, eventName, eventPath, repoPath) {
             reviewPhase.findingObservations.push(...resolutionResult.findingObservations);
         }));
         await finalizeWorkflow(octokit, context, previousReviewInfo, coreCheckId, results, reviewPhase.reports, reviewPhase.findingObservations, reviewPhase.shouldFailAction, reviewPhase.failureReasons, canResolveStale, triggerErrors);
-        (0,_base_js__WEBPACK_IMPORTED_MODULE_19__/* .handleTriggerErrors */ .a3)(triggerErrors, matchedTriggers.length);
+        (0,_base_js__WEBPACK_IMPORTED_MODULE_21__/* .handleTriggerErrors */ .a3)(triggerErrors, matchedTriggers.length);
     });
 }
 
@@ -8514,6 +8754,14 @@ function withoutBaseDuplicateSkills(base, repo, options = {}) {
     }
     return skipped.size > 0 ? { ...repo, skills } : repo;
 }
+/**
+ * Inherit the org base MCP servers into the repo layer, like custom providers:
+ * a repo layer that only adds skills should still reach the servers the org
+ * defined. A repo layer that declares its own `mcp` block replaces the base.
+ */
+function mergeMcpConfig(base, overlay) {
+    return overlay ?? base;
+}
 function mergeWardenConfigs(base, overlay, options = {}) {
     const effectiveOverlay = withoutBaseDuplicateSkills(base, overlay, options);
     const mergedConfig = {
@@ -8522,6 +8770,7 @@ function mergeWardenConfigs(base, overlay, options = {}) {
         skills: [...base.skills, ...effectiveOverlay.skills],
         runner: mergeRunnerConfig(base.runner, effectiveOverlay.runner),
         logs: mergeLogsConfig(base.logs, effectiveOverlay.logs),
+        mcp: mergeMcpConfig(base.mcp, effectiveOverlay.mcp),
     };
     const result = _schema_js__WEBPACK_IMPORTED_MODULE_5__/* .WardenConfigSchema */ .Tx.safeParse(mergedConfig);
     if (!result.success) {
@@ -8613,6 +8862,7 @@ function triggerIdentity(skill, trigger) {
         maxFindings: trigger?.maxFindings ?? skill.maxFindings,
         reportOnSuccess: trigger?.reportOnSuccess ?? skill.reportOnSuccess,
         requestChanges: trigger?.requestChanges ?? skill.requestChanges,
+        suggestions: trigger?.suggestions ?? skill.suggestions,
         failCheck: trigger?.failCheck ?? skill.failCheck,
         model: trigger?.model ?? skill.model,
         maxTurns: trigger?.maxTurns ?? skill.maxTurns,
@@ -8706,6 +8956,7 @@ function resolveSkillConfigs(config, cliModel, skillRootsByName) {
                 maxFindings: skill.maxFindings ?? defaults?.maxFindings,
                 reportOnSuccess: skill.reportOnSuccess ?? defaults?.reportOnSuccess,
                 requestChanges: skill.requestChanges ?? defaults?.requestChanges,
+                suggestions: skill.suggestions ?? defaults?.suggestions,
                 failCheck: skill.failCheck ?? defaults?.failCheck,
                 model: baseModel,
                 maxTurns: baseMaxTurns,
@@ -8743,6 +8994,7 @@ function resolveSkillConfigs(config, cliModel, skillRootsByName) {
                     maxFindings: trigger.maxFindings ?? skill.maxFindings ?? defaults?.maxFindings,
                     reportOnSuccess: trigger.reportOnSuccess ?? skill.reportOnSuccess ?? defaults?.reportOnSuccess,
                     requestChanges: trigger.requestChanges ?? skill.requestChanges ?? defaults?.requestChanges,
+                    suggestions: trigger.suggestions ?? skill.suggestions ?? defaults?.suggestions,
                     failCheck: trigger.failCheck ?? skill.failCheck ?? defaults?.failCheck,
                     model: (0,_utils_index_js__WEBPACK_IMPORTED_MODULE_6__/* .emptyToUndefined */ .Zu)(trigger.model) ?? baseModel,
                     maxTurns: trigger.maxTurns ?? baseMaxTurns,
@@ -8852,10 +9104,11 @@ function resolveModelLanes(inputs) {
 // EXPORTS
 __webpack_require__.d(__webpack_exports__, {
   H0: () => (/* binding */ DEFAULT_SCAN_LIMITS),
+  XO: () => (/* binding */ SkillMcpOptInSchema),
   Tx: () => (/* binding */ WardenConfigSchema)
 });
 
-// UNUSED EXPORTS: AgentRuntimeConfigSchema, AuxiliaryRuntimeConfigSchema, ChunkingConfigSchema, CoalesceConfigSchema, DefaultsSchema, EffortSchema, FilePatternSchema, IgnoreConfigSchema, LogCleanupModeSchema, LogsConfigSchema, ProviderConfigSchema, ProviderModelConfigSchema, ProvidersConfigSchema, RunnerConfigSchema, RuntimeNameSchema, ScanConfigSchema, ScheduleConfigSchema, SkillConfigSchema, SkillDefinitionSchema, SkillTriggerSchema, SynthesisRuntimeConfigSchema, ToolConfigSchema, ToolNameSchema, TriggerTypeSchema, VerificationConfigSchema
+// UNUSED EXPORTS: AgentRuntimeConfigSchema, AuxiliaryRuntimeConfigSchema, ChunkingConfigSchema, CoalesceConfigSchema, DefaultsSchema, EffortSchema, FilePatternSchema, IgnoreConfigSchema, LogCleanupModeSchema, LogsConfigSchema, McpConfigSchema, McpHttpServerSchema, McpServerConfigSchema, McpStdioServerSchema, ProviderConfigSchema, ProviderModelConfigSchema, ProvidersConfigSchema, RunnerConfigSchema, RuntimeNameSchema, ScanConfigSchema, ScheduleConfigSchema, SkillConfigSchema, SkillDefinitionSchema, SkillTriggerSchema, SynthesisRuntimeConfigSchema, ToolConfigSchema, ToolNameSchema, TriggerTypeSchema, VerificationConfigSchema
 
 // EXTERNAL MODULE: ../../node_modules/.pnpm/zod@4.4.3/node_modules/zod/v4/classic/schemas.js + 2 modules
 var schemas = __webpack_require__(53391);
@@ -8901,12 +9154,44 @@ const ToolConfigSchema = schemas/* object */.Ik({
     allowed: schemas/* array */.YO(ToolNameSchema).optional(),
     denied: schemas/* array */.YO(ToolNameSchema).optional(),
 });
+// MCP server definitions (global). Transport is discriminated by the presence of
+// `command` (stdio) vs `url` (HTTP). `.strict()` rejects entries that mix both,
+// forcing exactly one transport shape and yielding a clear validation error.
+const McpStdioServerSchema = schemas/* object */.Ik({
+    name: schemas/* string */.Yj().min(1),
+    /** Executable to spawn for a local stdio MCP server (e.g. "npx"). */
+    command: schemas/* string */.Yj().min(1),
+    args: schemas/* array */.YO(schemas/* string */.Yj()).optional(),
+    /** Environment for the spawned process. `${VAR}` values resolve from the host env. */
+    env: schemas/* record */.g1(schemas/* string */.Yj().min(1), schemas/* string */.Yj()).optional(),
+})
+    .strict();
+const McpHttpServerSchema = schemas/* object */.Ik({
+    name: schemas/* string */.Yj().min(1),
+    /** Endpoint of a remote Streamable HTTP / SSE MCP server. */
+    url: schemas/* string */.Yj().url(),
+    /** Request headers. `${VAR}` values resolve from the host env. */
+    headers: schemas/* record */.g1(schemas/* string */.Yj().min(1), schemas/* string */.Yj()).optional(),
+})
+    .strict();
+const McpServerConfigSchema = schemas/* union */.KC([McpStdioServerSchema, McpHttpServerSchema]);
+const McpConfigSchema = schemas/* object */.Ik({
+    servers: schemas/* array */.YO(McpServerConfigSchema).default([]),
+});
+/**
+ * Per-skill MCP opt-in, declared in SKILL.md frontmatter. Maps a global server
+ * name to either an explicit tool allowlist or "*" for all of the server's
+ * tools. A skill only ever sees the servers/tools it names (least privilege).
+ */
+const SkillMcpOptInSchema = schemas/* record */.g1(schemas/* string */.Yj().min(1), schemas/* union */.KC([schemas/* literal */.eu('*'), schemas/* array */.YO(schemas/* string */.Yj().min(1))]));
 // Skill definition
 const SkillDefinitionSchema = schemas/* object */.Ik({
     name: schemas/* string */.Yj().min(1),
     description: schemas/* string */.Yj(),
     prompt: schemas/* string */.Yj(),
     tools: ToolConfigSchema.optional(),
+    /** MCP servers/tools this skill opts into, parsed from `mcp:` frontmatter. */
+    mcp: SkillMcpOptInSchema.optional(),
     /** Directory where the skill was loaded from, for resolving resources (scripts/, references/, assets/) */
     rootDir: schemas/* string */.Yj().optional(),
 });
@@ -8958,6 +9243,8 @@ const SkillTriggerSchema = schemas/* object */.Ik({
     reportOnSuccess: schemas/* boolean */.zM().optional(),
     /** Use REQUEST_CHANGES review event when findings exceed failOn */
     requestChanges: schemas/* boolean */.zM().optional(),
+    /** Render committable ```suggestion blocks for findings that carry a fix. Default: false */
+    suggestions: schemas/* boolean */.zM().optional(),
     /** Fail the check run when findings exceed failOn */
     failCheck: schemas/* boolean */.zM().optional(),
     model: schemas/* string */.Yj().optional(),
@@ -8998,6 +9285,8 @@ const SkillConfigSchema = schemas/* object */.Ik({
     reportOnSuccess: schemas/* boolean */.zM().optional(),
     /** Use REQUEST_CHANGES review event when findings exceed failOn */
     requestChanges: schemas/* boolean */.zM().optional(),
+    /** Render committable ```suggestion blocks for findings that carry a fix. Default: false */
+    suggestions: schemas/* boolean */.zM().optional(),
     /** Fail the check run when findings exceed failOn */
     failCheck: schemas/* boolean */.zM().optional(),
     /** Model to use for this skill (e.g., 'openai/gpt-5.5'). Uses SDK default if not specified. */
@@ -9108,6 +9397,8 @@ const DefaultsSchema = schemas/* object */.Ik({
     reportOnSuccess: schemas/* boolean */.zM().optional(),
     /** Use REQUEST_CHANGES review event when findings exceed failOn. Default: false */
     requestChanges: schemas/* boolean */.zM().optional(),
+    /** Render committable ```suggestion blocks for findings that carry a fix. Default: false */
+    suggestions: schemas/* boolean */.zM().optional(),
     /** Fail the check run when findings exceed failOn. Default: false */
     failCheck: schemas/* boolean */.zM().optional(),
     /** Default model for all skills (e.g., 'openai/gpt-5.5') */
@@ -9159,6 +9450,8 @@ const WardenConfigSchema = schemas/* object */.Ik({
     skills: schemas/* array */.YO(SkillConfigSchema).default([]),
     runner: RunnerConfigSchema.optional(),
     logs: LogsConfigSchema.optional(),
+    /** Global MCP servers available to skills that opt in via `mcp:` frontmatter. */
+    mcp: McpConfigSchema.optional(),
 })
     .superRefine((config, ctx) => {
     const names = config.skills.map((s) => s.name);
@@ -9168,6 +9461,15 @@ const WardenConfigSchema = schemas/* object */.Ik({
             code: compat/* ZodIssueCode */.eq.custom,
             message: `Duplicate skill names: ${[...new Set(duplicates)].join(', ')}`,
             path: ['skills'],
+        });
+    }
+    const serverNames = (config.mcp?.servers ?? []).map((s) => s.name);
+    const duplicateServers = serverNames.filter((name, i) => serverNames.indexOf(name) !== i);
+    if (duplicateServers.length > 0) {
+        ctx.addIssue({
+            code: compat/* ZodIssueCode */.eq.custom,
+            message: `Duplicate MCP server names: ${[...new Set(duplicateServers)].join(', ')}`,
+            path: ['mcp', 'servers'],
         });
     }
     // Validate schedule skills have paths
@@ -11040,7 +11342,7 @@ async function findExistingIssue(octokit, owner, repo, title) {
 
 
 function renderSkillReport(report, options = {}) {
-    const { maxFindings, groupByFile = true, reportOn, minConfidence, failOn, requestChanges, checkRunUrl, totalFindings, allFindings } = options;
+    const { maxFindings, groupByFile = true, reportOn, minConfidence, failOn, requestChanges, suggestions, checkRunUrl, totalFindings, allFindings } = options;
     // Filter by reportOn threshold and confidence, then apply maxFindings limit
     const filteredFindings = (0,_types_index_js__WEBPACK_IMPORTED_MODULE_0__/* .filterFindings */ .Ni)(report.findings, reportOn, minConfidence);
     const findings = maxFindings ? filteredFindings.slice(0, maxFindings) : filteredFindings;
@@ -11051,11 +11353,21 @@ function renderSkillReport(report, options = {}) {
     // Use allFindings for failOn evaluation if provided (e.g., when report.findings was modified for dedup)
     // Apply confidence filtering to failOn evaluation too
     const findingsForFailOn = (0,_types_index_js__WEBPACK_IMPORTED_MODULE_0__/* .filterFindings */ .Ni)(allFindings ?? report.findings, undefined, minConfidence);
-    const review = renderReview(sortedFindings, report, failOn, findingsForFailOn, requestChanges);
+    const review = renderReview(sortedFindings, report, failOn, findingsForFailOn, requestChanges, suggestions);
     const summaryComment = renderSummaryComment(report, sortedFindings, groupByFile, checkRunUrl, hiddenCount);
     return { review, summaryComment };
 }
-function renderReview(findings, report, failOn, allFindings, requestChanges) {
+/**
+ * Severity flair prepended to each inline review comment so severity is
+ * scannable in the PR timeline. Always rendered, independent of the
+ * suggestions flag.
+ */
+const SEVERITY_FLAIR = {
+    high: '🔴 **HIGH**',
+    medium: '🟠 **MEDIUM**',
+    low: '🟡 **LOW**',
+};
+function renderReview(findings, report, failOn, allFindings, requestChanges, suggestions) {
     const findingsWithLocation = findings.filter((f) => f.location);
     const findingsWithoutLocation = findings.filter((f) => !f.location);
     // Determine review event type based on failOn threshold against ALL findings.
@@ -11085,9 +11397,15 @@ function renderReview(findings, report, failOn, allFindings, requestChanges) {
         if (!location) {
             throw new Error('Unexpected: finding without location in filtered list');
         }
-        let body = `**${(0,_utils_index_js__WEBPACK_IMPORTED_MODULE_3__/* .escapeHtml */ .ZD)(finding.title)}**\n\n${(0,_utils_index_js__WEBPACK_IMPORTED_MODULE_3__/* .escapeHtml */ .ZD)(finding.description)}`;
+        let body = `${SEVERITY_FLAIR[finding.severity]} · **${(0,_utils_index_js__WEBPACK_IMPORTED_MODULE_3__/* .escapeHtml */ .ZD)(finding.title)}**\n\n${(0,_utils_index_js__WEBPACK_IMPORTED_MODULE_3__/* .escapeHtml */ .ZD)(finding.description)}`;
         if (finding.verification?.trim()) {
             body += `\n\n${renderVerification(finding.verification)}`;
+        }
+        // Committable suggestion. Replaces exactly the anchored line range
+        // (startLine..endLine). Content is emitted verbatim, never escaped, so
+        // GitHub can commit it. Placed before the machine markers below.
+        if (suggestions && finding.suggestion !== undefined) {
+            body += `\n\n\`\`\`suggestion\n${finding.suggestion}\n\`\`\``;
         }
         // Additional locations section
         if (finding.additionalLocations?.length) {
@@ -11432,16 +11750,18 @@ async function resolveStaleComments(octokit, staleComments, options = {}) {
 /* harmony import */ var _sentry_js__WEBPACK_IMPORTED_MODULE_1__ = __webpack_require__(30340);
 /* harmony import */ var _errors_js__WEBPACK_IMPORTED_MODULE_2__ = __webpack_require__(98229);
 /* harmony import */ var _retry_js__WEBPACK_IMPORTED_MODULE_3__ = __webpack_require__(2022);
-/* harmony import */ var _usage_js__WEBPACK_IMPORTED_MODULE_11__ = __webpack_require__(44759);
+/* harmony import */ var _usage_js__WEBPACK_IMPORTED_MODULE_12__ = __webpack_require__(44759);
 /* harmony import */ var _prompt_js__WEBPACK_IMPORTED_MODULE_4__ = __webpack_require__(12204);
 /* harmony import */ var _extract_js__WEBPACK_IMPORTED_MODULE_5__ = __webpack_require__(29709);
 /* harmony import */ var _post_process_js__WEBPACK_IMPORTED_MODULE_6__ = __webpack_require__(10048);
-/* harmony import */ var _report_files_js__WEBPACK_IMPORTED_MODULE_13__ = __webpack_require__(79418);
+/* harmony import */ var _report_files_js__WEBPACK_IMPORTED_MODULE_14__ = __webpack_require__(79418);
 /* harmony import */ var _runtimes_index_js__WEBPACK_IMPORTED_MODULE_7__ = __webpack_require__(23473);
-/* harmony import */ var _types_js__WEBPACK_IMPORTED_MODULE_12__ = __webpack_require__(88973);
-/* harmony import */ var _prepare_js__WEBPACK_IMPORTED_MODULE_8__ = __webpack_require__(15507);
-/* harmony import */ var _utils_index_js__WEBPACK_IMPORTED_MODULE_9__ = __webpack_require__(36137);
-/* harmony import */ var _sentry_trace_js__WEBPACK_IMPORTED_MODULE_10__ = __webpack_require__(68016);
+/* harmony import */ var _runtimes_mcp_index_js__WEBPACK_IMPORTED_MODULE_8__ = __webpack_require__(30257);
+/* harmony import */ var _types_js__WEBPACK_IMPORTED_MODULE_13__ = __webpack_require__(88973);
+/* harmony import */ var _prepare_js__WEBPACK_IMPORTED_MODULE_9__ = __webpack_require__(15507);
+/* harmony import */ var _utils_index_js__WEBPACK_IMPORTED_MODULE_10__ = __webpack_require__(36137);
+/* harmony import */ var _sentry_trace_js__WEBPACK_IMPORTED_MODULE_11__ = __webpack_require__(68016);
+
 
 
 
@@ -11472,7 +11792,7 @@ function isCircuitBreakerCode(code) {
 function hunkFailureFromCircuit(reason, usage, attempts, trace) {
     return {
         findings: [],
-        usage: (0,_usage_js__WEBPACK_IMPORTED_MODULE_11__/* .aggregateUsage */ .Z$)(usage),
+        usage: (0,_usage_js__WEBPACK_IMPORTED_MODULE_12__/* .aggregateUsage */ .Z$)(usage),
         failed: true,
         extractionFailed: false,
         failureCode: reason.code,
@@ -11496,7 +11816,7 @@ function allHunksFailedGuidance(runtime) {
 function buildHunkTrace(args) {
     if (!args.enabled)
         return undefined;
-    const spanContext = (0,_sentry_trace_js__WEBPACK_IMPORTED_MODULE_10__/* .getSpanContext */ .w8)(args.span);
+    const spanContext = (0,_sentry_trace_js__WEBPACK_IMPORTED_MODULE_11__/* .getSpanContext */ .w8)(args.span);
     const spans = args.traceRecorder?.snapshot();
     const childTraceId = spans?.find((span) => span.traceId)?.traceId;
     const trace = {
@@ -11654,18 +11974,18 @@ async function analyzeHunk(skill, hunkCtx, repoPath, options, callbacks, prConte
     }, async (span) => {
         const { abortController, retry } = options;
         const runtimeName = options.runtime ?? 'pi';
-        const traceRecorder = options.captureTraces ? (0,_sentry_trace_js__WEBPACK_IMPORTED_MODULE_10__/* .startTraceRecorder */ .qr)(span) : undefined;
+        const traceRecorder = options.captureTraces ? (0,_sentry_trace_js__WEBPACK_IMPORTED_MODULE_11__/* .startTraceRecorder */ .qr)(span) : undefined;
         const systemPrompt = (0,_prompt_js__WEBPACK_IMPORTED_MODULE_4__/* .buildHunkSystemPrompt */ .q)(skill);
         const userPrompt = (0,_prompt_js__WEBPACK_IMPORTED_MODULE_4__/* .buildHunkUserPrompt */ ._)(skill, hunkCtx, prContext);
         // Report prompt size information
         const systemChars = systemPrompt.length;
         const userChars = userPrompt.length;
         const totalChars = systemChars + userChars;
-        const estimatedTokensCount = (0,_usage_js__WEBPACK_IMPORTED_MODULE_11__/* .estimateTokens */ .bP)(totalChars);
+        const estimatedTokensCount = (0,_usage_js__WEBPACK_IMPORTED_MODULE_12__/* .estimateTokens */ .bP)(totalChars);
         // Always call onPromptSize if provided (for debug mode)
         callbacks?.onPromptSize?.(callbacks.lineRange, systemChars, userChars, totalChars, estimatedTokensCount);
         // Warn about large prompts
-        if (totalChars > _types_js__WEBPACK_IMPORTED_MODULE_12__/* .LARGE_PROMPT_THRESHOLD_CHARS */ .j) {
+        if (totalChars > _types_js__WEBPACK_IMPORTED_MODULE_13__/* .LARGE_PROMPT_THRESHOLD_CHARS */ .j) {
             callbacks?.onLargePrompt?.(callbacks.lineRange, totalChars, estimatedTokensCount);
         }
         // Merge retry config with defaults
@@ -11694,7 +12014,7 @@ async function analyzeHunk(skill, hunkCtx, repoPath, options, callbacks, prConte
                 callbacks?.onHunkFailed?.(callbacks.lineRange, 'Analysis aborted');
                 return {
                     findings: [],
-                    usage: (0,_usage_js__WEBPACK_IMPORTED_MODULE_11__/* .aggregateUsage */ .Z$)(accumulatedUsage),
+                    usage: (0,_usage_js__WEBPACK_IMPORTED_MODULE_12__/* .aggregateUsage */ .Z$)(accumulatedUsage),
                     failed: true,
                     extractionFailed: false,
                     failureCode: 'aborted',
@@ -11713,7 +12033,7 @@ async function analyzeHunk(skill, hunkCtx, repoPath, options, callbacks, prConte
             }
             try {
                 const runtime = (0,_runtimes_index_js__WEBPACK_IMPORTED_MODULE_7__/* .getRuntime */ .fr)(runtimeName);
-                const { result: resultMessage, authError } = await (0,_sentry_trace_js__WEBPACK_IMPORTED_MODULE_10__/* .withTraceRecorder */ .gP)(traceRecorder, () => runtime.runSkill({
+                const { result: resultMessage, authError } = await (0,_sentry_trace_js__WEBPACK_IMPORTED_MODULE_11__/* .withTraceRecorder */ .gP)(traceRecorder, () => runtime.runSkill({
                     apiKey: options.apiKey,
                     systemPrompt,
                     userPrompt,
@@ -11732,6 +12052,10 @@ async function analyzeHunk(skill, hunkCtx, repoPath, options, callbacks, prConte
                         pathToClaudeCodeExecutable: options.pathToClaudeCodeExecutable,
                         providers: options.providers,
                     }),
+                    mcp: (0,_runtimes_index_js__WEBPACK_IMPORTED_MODULE_7__/* .getRuntimeMcpOptions */ .Xe)(runtimeName, {
+                        mcpServers: options.mcpServers,
+                        skillMcp: skill.mcp,
+                    }),
                 }));
                 // Check for authentication errors from auth_status messages
                 // auth_status errors are always auth-related - throw immediately
@@ -11742,7 +12066,7 @@ async function analyzeHunk(skill, hunkCtx, repoPath, options, callbacks, prConte
                     notifyHunkFailed(callbacks, callbacks?.lineRange ?? lineRange, 'SDK returned no result');
                     return {
                         findings: [],
-                        usage: (0,_usage_js__WEBPACK_IMPORTED_MODULE_11__/* .aggregateUsage */ .Z$)(accumulatedUsage),
+                        usage: (0,_usage_js__WEBPACK_IMPORTED_MODULE_12__/* .aggregateUsage */ .Z$)(accumulatedUsage),
                         failed: true,
                         extractionFailed: false,
                         failureCode: 'sdk_error',
@@ -11799,7 +12123,7 @@ async function analyzeHunk(skill, hunkCtx, repoPath, options, callbacks, prConte
                     }
                     return {
                         findings: [],
-                        usage: (0,_usage_js__WEBPACK_IMPORTED_MODULE_11__/* .aggregateUsage */ .Z$)(accumulatedUsage),
+                        usage: (0,_usage_js__WEBPACK_IMPORTED_MODULE_12__/* .aggregateUsage */ .Z$)(accumulatedUsage),
                         failed: true,
                         extractionFailed: false,
                         failureCode,
@@ -11818,7 +12142,7 @@ async function analyzeHunk(skill, hunkCtx, repoPath, options, callbacks, prConte
                     };
                 }
                 options.circuitBreaker?.recordSuccess();
-                const parseResult = await (0,_sentry_trace_js__WEBPACK_IMPORTED_MODULE_10__/* .withTraceRecorder */ .gP)(traceRecorder, () => parseHunkOutput(resultMessage, hunkCtx.filename, skill.name, options));
+                const parseResult = await (0,_sentry_trace_js__WEBPACK_IMPORTED_MODULE_11__/* .withTraceRecorder */ .gP)(traceRecorder, () => parseHunkOutput(resultMessage, hunkCtx.filename, skill.name, options));
                 // Filter findings outside hunk line range (defense-in-depth)
                 const hunkRange = (0,_diff_index_js__WEBPACK_IMPORTED_MODULE_0__/* .getHunkLineRange */ .sK)(hunkCtx.hunk);
                 const { filtered, dropped } = filterOutOfRangeFindings(parseResult.findings, hunkRange);
@@ -11848,7 +12172,7 @@ async function analyzeHunk(skill, hunkCtx, repoPath, options, callbacks, prConte
                 span.setAttribute('warden.finding.count', filteredFindings.length);
                 return {
                     findings: filteredFindings,
-                    usage: (0,_usage_js__WEBPACK_IMPORTED_MODULE_11__/* .aggregateUsage */ .Z$)(accumulatedUsage),
+                    usage: (0,_usage_js__WEBPACK_IMPORTED_MODULE_12__/* .aggregateUsage */ .Z$)(accumulatedUsage),
                     failed: false,
                     extractionFailed: parseResult.extractionFailed,
                     extractionError: parseResult.extractionError,
@@ -11879,7 +12203,7 @@ async function analyzeHunk(skill, hunkCtx, repoPath, options, callbacks, prConte
                     callbacks?.onHunkFailed?.(callbacks.lineRange, 'Analysis aborted');
                     return {
                         findings: [],
-                        usage: (0,_usage_js__WEBPACK_IMPORTED_MODULE_11__/* .aggregateUsage */ .Z$)(accumulatedUsage),
+                        usage: (0,_usage_js__WEBPACK_IMPORTED_MODULE_12__/* .aggregateUsage */ .Z$)(accumulatedUsage),
                         failed: true,
                         extractionFailed: false,
                         failureCode: 'aborted',
@@ -11941,7 +12265,7 @@ async function analyzeHunk(skill, hunkCtx, repoPath, options, callbacks, prConte
                     callbacks?.onHunkFailed?.(callbacks.lineRange, 'Analysis aborted during retry delay');
                     return {
                         findings: [],
-                        usage: (0,_usage_js__WEBPACK_IMPORTED_MODULE_11__/* .aggregateUsage */ .Z$)(accumulatedUsage),
+                        usage: (0,_usage_js__WEBPACK_IMPORTED_MODULE_12__/* .aggregateUsage */ .Z$)(accumulatedUsage),
                         failed: true,
                         extractionFailed: false,
                         failureCode: 'aborted',
@@ -11988,7 +12312,7 @@ async function analyzeHunk(skill, hunkCtx, repoPath, options, callbacks, prConte
         }
         return {
             findings: [],
-            usage: (0,_usage_js__WEBPACK_IMPORTED_MODULE_11__/* .aggregateUsage */ .Z$)(accumulatedUsage),
+            usage: (0,_usage_js__WEBPACK_IMPORTED_MODULE_12__/* .aggregateUsage */ .Z$)(accumulatedUsage),
             failed: true,
             extractionFailed: false,
             failureCode: retryCode,
@@ -12128,7 +12452,7 @@ async function analyzeFile(skill, file, repoPath, options = {}, callbacks, prCon
         return {
             filename: file.filename,
             findings: fileFindings,
-            usage: (0,_usage_js__WEBPACK_IMPORTED_MODULE_11__/* .aggregateUsage */ .Z$)(fileUsage),
+            usage: (0,_usage_js__WEBPACK_IMPORTED_MODULE_12__/* .aggregateUsage */ .Z$)(fileUsage),
             failedHunks,
             failedExtractions,
             hunkFailures,
@@ -12171,6 +12495,14 @@ async function runSkill(skill, context, options = {}) {
         },
     }, async (span) => {
         try {
+            // Fail fast before any hunk work when this skill's MCP opt-in references
+            // an undefined server or a server whose secrets are unset.
+            (0,_runtimes_mcp_index_js__WEBPACK_IMPORTED_MODULE_8__/* .assertMcpConfigForRun */ .H_)({
+                runtime: options.runtime,
+                servers: options.mcpServers,
+                skills: [{ name: skill.name, mcp: skill.mcp }],
+                env: process.env,
+            });
             const report = await runSkillAnalysis(skill, context, options);
             span.setAttribute('warden.finding.count', report.findings.length);
             (0,_sentry_js__WEBPACK_IMPORTED_MODULE_1__/* .emitSkillMetrics */ .s7)(report);
@@ -12188,7 +12520,7 @@ async function runSkillAnalysis(skill, context, options = {}) {
     if (!context.pullRequest) {
         throw new _errors_js__WEBPACK_IMPORTED_MODULE_2__/* .SkillRunnerError */ .cy('Pull request context required for skill execution');
     }
-    const { files: fileHunks, skippedFiles } = (0,_prepare_js__WEBPACK_IMPORTED_MODULE_8__/* .prepareFiles */ .t)(context, {
+    const { files: fileHunks, skippedFiles } = (0,_prepare_js__WEBPACK_IMPORTED_MODULE_9__/* .prepareFiles */ .t)(context, {
         contextLines: options.contextLines,
         ignore: options.ignore,
         scan: options.scan,
@@ -12199,7 +12531,7 @@ async function runSkillAnalysis(skill, context, options = {}) {
             skill: skill.name,
             summary: 'No code changes to analyze',
             findings: [],
-            usage: (0,_usage_js__WEBPACK_IMPORTED_MODULE_11__/* .emptyUsage */ .ly)(),
+            usage: (0,_usage_js__WEBPACK_IMPORTED_MODULE_12__/* .emptyUsage */ .ly)(),
             durationMs: Date.now() - startTime,
             model: options.model,
             runtime: options.runtime ?? 'pi',
@@ -12292,9 +12624,9 @@ async function runSkillAnalysis(skill, context, options = {}) {
     // Process files - parallel or sequential based on options
     if (parallel) {
         // Process files with sliding-window concurrency pool
-        const fileConcurrency = options.concurrency ?? _types_js__WEBPACK_IMPORTED_MODULE_12__/* .DEFAULT_FILE_CONCURRENCY */ .f;
+        const fileConcurrency = options.concurrency ?? _types_js__WEBPACK_IMPORTED_MODULE_13__/* .DEFAULT_FILE_CONCURRENCY */ .f;
         const batchDelayMs = options.batchDelayMs ?? 0;
-        fileResults.push(...await (0,_utils_index_js__WEBPACK_IMPORTED_MODULE_9__/* .runPool */ .kD)(fileHunks, fileConcurrency, async (fileHunkEntry, index) => {
+        fileResults.push(...await (0,_utils_index_js__WEBPACK_IMPORTED_MODULE_10__/* .runPool */ .kD)(fileHunks, fileConcurrency, async (fileHunkEntry, index) => {
             // Rate-limit: delay items beyond the first concurrent wave
             if (index >= fileConcurrency && batchDelayMs > 0) {
                 await new Promise((resolve) => setTimeout(resolve, batchDelayMs));
@@ -12378,7 +12710,7 @@ async function runSkillAnalysis(skill, context, options = {}) {
     // Generate summary
     const summary = generateSummary(skill.name, finalFindings);
     // Aggregate usage across all hunks
-    const totalUsage = (0,_usage_js__WEBPACK_IMPORTED_MODULE_11__/* .aggregateUsage */ .Z$)(allUsage);
+    const totalUsage = (0,_usage_js__WEBPACK_IMPORTED_MODULE_12__/* .aggregateUsage */ .Z$)(allUsage);
     const report = {
         skill: skill.name,
         summary,
@@ -12386,7 +12718,7 @@ async function runSkillAnalysis(skill, context, options = {}) {
         usage: totalUsage,
         durationMs: Date.now() - startTime,
         model: options.model,
-        files: (0,_report_files_js__WEBPACK_IMPORTED_MODULE_13__/* .buildFileReports */ .K)(fileResults.map((fr) => ({
+        files: (0,_report_files_js__WEBPACK_IMPORTED_MODULE_14__/* .buildFileReports */ .K)(fileResults.map((fr) => ({
             filename: fr.filename,
             durationMs: fr.durationMs,
             usage: fr.result.usage,
@@ -12408,11 +12740,11 @@ async function runSkillAnalysis(skill, context, options = {}) {
     if (options.captureTraces && allTraces.length > 0) {
         report.traces = allTraces;
     }
-    const auxUsage = (0,_usage_js__WEBPACK_IMPORTED_MODULE_11__/* .aggregateAuxiliaryUsage */ .RL)(allAuxiliaryUsage);
+    const auxUsage = (0,_usage_js__WEBPACK_IMPORTED_MODULE_12__/* .aggregateAuxiliaryUsage */ .RL)(allAuxiliaryUsage);
     if (auxUsage) {
         report.auxiliaryUsage = auxUsage;
     }
-    const auxAttribution = (0,_usage_js__WEBPACK_IMPORTED_MODULE_11__/* .aggregateAuxiliaryUsageAttribution */ .UN)(allAuxiliaryUsage);
+    const auxAttribution = (0,_usage_js__WEBPACK_IMPORTED_MODULE_12__/* .aggregateAuxiliaryUsageAttribution */ .UN)(allAuxiliaryUsage);
     if (auxAttribution) {
         report.auxiliaryUsageAttribution = auxAttribution;
     }
@@ -13553,7 +13885,8 @@ Full schema:
         "startLine": 10,
         "endLine": 15
       },
-      "verification": "Required. Evidence for the public Evidence block. Write 2-5 short Markdown bullets tracing the concrete code path, guard, condition, or behavior that makes the finding real. Use function/file names when useful. Do not use checklist labels, generic reasoning, or restate the description."
+      "verification": "Required. Evidence for the public Evidence block. Write 2-5 short Markdown bullets tracing the concrete code path, guard, condition, or behavior that makes the finding real. Use function/file names when useful. Do not use checklist labels, generic reasoning, or restate the description.",
+      "suggestion": "Optional. A concrete, committable fix. The FULL replacement text for exactly the lines in 'location' (startLine..endLine) - new code only, no diff markers, no surrounding unchanged lines."
     }
   ]
 }
@@ -13562,6 +13895,7 @@ Requirements:
 - Return valid JSON starting with {"findings":
 - "findings" array can be empty if no issues found
 - "location.path" is auto-filled from context - just provide startLine (and optionally endLine). Omit location entirely for general findings not about a specific line.
+- "suggestion" is optional. Include it ONLY when you have a concrete, complete fix. It must be the exact replacement for every line in "location" (set "location.endLine" to cover the full span you are rewriting). Emit new code only - no leading '+'/'-', no unchanged context lines. Omit "suggestion" for advisory findings or when the fix touches code outside the range.
 - "location.startLine" MUST be within the hunk line range (shown in the "## Hunk" header). If the issue originates in surrounding code, anchor to the nearest changed line in the hunk and note the actual location in the description.
 - "confidence" reflects how certain you are this is a real issue given the codebase context
 - "description" is rendered directly in GitHub inline comments. Keep it brief and actionable, usually one sentence.
@@ -13850,11 +14184,13 @@ function assertCustomProviderAuthForRuntime(runtime, providers, env) {
 
 // EXPORTS
 __webpack_require__.d(__webpack_exports__, {
+  V8: () => (/* reexport */ mcp/* defaultMcpConnectionManager */.V8),
   fr: () => (/* binding */ getRuntime),
+  Xe: () => (/* binding */ getRuntimeMcpOptions),
   g_: () => (/* binding */ getRuntimeProviderOptions)
 });
 
-// UNUSED EXPORTS: claudeRuntime, piRuntime
+// UNUSED EXPORTS: assertMcpConfigForRun, claudeRuntime, piRuntime
 
 // EXTERNAL MODULE: ../../node_modules/.pnpm/@anthropic-ai+claude-agent-sdk@0.3.150_@anthropic-ai+sdk@0.98.0_zod@4.4.3__@modelcontex_bc53b174e3beaf638722df76729d2dd2/node_modules/@anthropic-ai/claude-agent-sdk/sdk.mjs
 var sdk = __webpack_require__(21056);
@@ -14364,7 +14700,11 @@ const claudeRuntime = {
 var pi = __webpack_require__(19113);
 // EXTERNAL MODULE: ./src/sdk/runtimes/custom-provider.ts
 var custom_provider = __webpack_require__(25831);
+// EXTERNAL MODULE: ./src/sdk/runtimes/mcp/index.ts + 6 modules
+var mcp = __webpack_require__(30257);
 ;// CONCATENATED MODULE: ./src/sdk/runtimes/index.ts
+
+
 
 
 
@@ -14396,6 +14736,17 @@ function getRuntimeProviderOptions(name, options) {
         return (0,custom_provider/* buildPiProviderOptions */.RQ)(options.providers, process.env);
     }
     return undefined;
+}
+/**
+ * Build the per-skill MCP payload at the runtime boundary. Only the Pi runtime
+ * consumes MCP; other runtimes get `undefined`. Secrets resolve from the live
+ * process env, matching the run-start preflight (assertMcpConfigForRun).
+ */
+function getRuntimeMcpOptions(name, input) {
+    if (name !== 'pi') {
+        return undefined;
+    }
+    return (0,mcp/* buildRuntimeMcpOptions */.VH)(input.skillMcp, input.mcpServers, process.env);
 }
 
 
@@ -15054,7 +15405,9 @@ async function verifyFindings(findings, options) {
 /* harmony import */ var node_url__WEBPACK_IMPORTED_MODULE_3__ = __webpack_require__(73136);
 /* harmony import */ var node_url__WEBPACK_IMPORTED_MODULE_3___default = /*#__PURE__*/__webpack_require__.n(node_url__WEBPACK_IMPORTED_MODULE_3__);
 /* harmony import */ var _sentry_dotagents_lib__WEBPACK_IMPORTED_MODULE_4__ = __webpack_require__(9263);
-/* harmony import */ var _utils_path_js__WEBPACK_IMPORTED_MODULE_5__ = __webpack_require__(60702);
+/* harmony import */ var _config_schema_js__WEBPACK_IMPORTED_MODULE_5__ = __webpack_require__(96120);
+/* harmony import */ var _utils_path_js__WEBPACK_IMPORTED_MODULE_6__ = __webpack_require__(60702);
+
 
 
 
@@ -15123,7 +15476,7 @@ const AGENT_MARKER_FILE = 'AGENT.md';
  * Resolve a skill path, handling absolute paths, tilde expansion, and relative paths.
  */
 function resolveSkillPath(nameOrPath, repoRoot) {
-    return (0,_utils_path_js__WEBPACK_IMPORTED_MODULE_5__/* .resolvePathTarget */ .BI)(nameOrPath, repoRoot);
+    return (0,_utils_path_js__WEBPACK_IMPORTED_MODULE_6__/* .resolvePathTarget */ .BI)(nameOrPath, repoRoot);
 }
 /**
  * Resolve likely package roots from source, compiled package, or ncc action bundle locations.
@@ -15155,7 +15508,7 @@ function builtinSkillPath(root, name, dir, markerFile = 'SKILL.md') {
  * Return true when a skill name resolves to a package-native built-in skill.
  */
 function isBuiltinSkillName(name) {
-    if ((0,_utils_path_js__WEBPACK_IMPORTED_MODULE_5__/* .isPathLike */ .RA)(name) || !BUILTIN_SKILL_NAME_SET.has(name)) {
+    if ((0,_utils_path_js__WEBPACK_IMPORTED_MODULE_6__/* .isPathLike */ .RA)(name) || !BUILTIN_SKILL_NAME_SET.has(name)) {
         return false;
     }
     for (const root of resolvePackageRootCandidates()) {
@@ -15182,12 +15535,31 @@ function extractBody(content) {
     return match?.[1] ?? '';
 }
 /**
+ * Validate the optional `mcp:` frontmatter into a per-skill opt-in map.
+ *
+ * Malformed opt-ins are dropped with a warning rather than failing the whole
+ * skill load, matching the lenient handling of invalid `allowed-tools`. A skill
+ * that references an undefined server or tool is still caught later by the
+ * MCP run-start preflight.
+ */
+function parseSkillMcpOptIn(raw, filePath, onWarning) {
+    if (raw === undefined) {
+        return undefined;
+    }
+    const parsed = _config_schema_js__WEBPACK_IMPORTED_MODULE_5__/* .SkillMcpOptInSchema */ .XO.safeParse(raw);
+    if (!parsed.success) {
+        onWarning?.(`Ignoring malformed 'mcp' frontmatter in ${filePath}: ${parsed.error.message}`);
+        return undefined;
+    }
+    return parsed.data;
+}
+/**
  * Load a skill from a SKILL.md file (agentskills.io format).
  *
  * Frontmatter parsing and `allowed-tools` interpretation are delegated to
  * `@sentry/dotagents-lib`; this wrapper attaches warden-specific fields
- * (`prompt` body, `rootDir`, `tools.allowed`) and translates lib errors to
- * `SkillLoaderError` for callers that catch on warden's error type.
+ * (`prompt` body, `rootDir`, `tools.allowed`, `mcp`) and translates lib errors
+ * to `SkillLoaderError` for callers that catch on warden's error type.
  */
 async function loadSkillFromMarkdown(filePath, options) {
     let meta;
@@ -15204,11 +15576,13 @@ async function loadSkillFromMarkdown(filePath, options) {
     // the OS file cache catches the second read.
     const content = await (0,node_fs_promises__WEBPACK_IMPORTED_MODULE_0__.readFile)(filePath, 'utf-8');
     const body = extractBody(content);
+    const mcp = parseSkillMcpOptIn(meta['mcp'], filePath, options?.onWarning);
     return {
         name: meta.name,
         description: meta.description,
         prompt: body.trim(),
         tools: meta.allowedTools !== undefined ? { allowed: meta.allowedTools } : undefined,
+        ...(mcp !== undefined ? { mcp } : {}),
         rootDir: (0,node_path__WEBPACK_IMPORTED_MODULE_1__.dirname)(filePath),
     };
 }
@@ -15374,7 +15748,7 @@ async function resolveEntry(nameOrPath, repoRoot, options, config) {
         return resolver(remote, nameOrPath, { offline });
     }
     // 2. Direct path resolution
-    if ((0,_utils_path_js__WEBPACK_IMPORTED_MODULE_5__/* .isPathLike */ .RA)(nameOrPath)) {
+    if ((0,_utils_path_js__WEBPACK_IMPORTED_MODULE_6__/* .isPathLike */ .RA)(nameOrPath)) {
         const resolvedPath = resolveSkillPath(nameOrPath, repoRoot);
         const markerPath = (0,node_path__WEBPACK_IMPORTED_MODULE_1__.join)(resolvedPath, config.markerFile);
         if ((0,node_fs__WEBPACK_IMPORTED_MODULE_2__.existsSync)(markerPath)) {

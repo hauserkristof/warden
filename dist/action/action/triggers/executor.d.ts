@@ -7,6 +7,7 @@
  */
 import type { ResolvedTrigger } from '../../config/loader.js';
 import type { EventContext, SkillReport, SeverityThreshold, ConfidenceThreshold } from '../../types/index.js';
+import type { McpServerConfig } from '../../config/schema.js';
 import type { RenderResult } from '../../output/types.js';
 import type { Semaphore } from '../../utils/index.js';
 import type { ProviderFailureCircuitBreaker } from '../../sdk/circuit-breaker.js';
@@ -51,6 +52,8 @@ export interface TriggerExecutorDeps {
     globalRequestChanges?: boolean;
     /** Global fail-check from action inputs (trigger-specific takes precedence) */
     globalFailCheck?: boolean;
+    /** Global MCP servers available to skills that opt in (Pi runtime only). */
+    mcpServers?: McpServerConfig[];
     /** Global semaphore for limiting concurrent file analyses across triggers */
     semaphore?: Semaphore;
     /** Shared controller for stopping the whole action run */
@@ -74,6 +77,7 @@ export interface TriggerResult {
     minConfidence?: ConfidenceThreshold;
     reportOnSuccess?: boolean;
     requestChanges?: boolean;
+    suggestions?: boolean;
     failCheck?: boolean;
     checkRunUrl?: string;
     maxFindings?: number;

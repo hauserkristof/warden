@@ -41,6 +41,8 @@ export interface ActionInputs {
   parallel: number;
   /** Whether to dedup findings against non-Warden (external) PR comments. Default: true */
   dedupExternal?: boolean;
+  /** Whether to post the sticky, aggregated PR summary comment. Default: true */
+  prSummary?: boolean;
 }
 
 // -----------------------------------------------------------------------------
@@ -114,6 +116,7 @@ export function parseActionInputs(): ActionInputs {
   const requestChanges = parseBooleanInput(getInput('request-changes'));
   const failCheck = parseBooleanInput(getInput('fail-check'));
   const dedupExternal = parseBooleanInput(getInput('dedup-external'));
+  const prSummary = parseBooleanInput(getInput('pr-summary'));
 
   return {
     anthropicApiKey,
@@ -131,6 +134,7 @@ export function parseActionInputs(): ActionInputs {
     failCheck,
     parallel: Number.isNaN(parallelParsed) ? DEFAULT_CONCURRENCY : parallelParsed,
     dedupExternal,
+    prSummary,
   };
 }
 

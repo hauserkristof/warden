@@ -1061,6 +1061,336 @@ const apiUsageToStats = anthropicUsageToStats;
 
 /***/ }),
 
+/***/ 30257:
+/***/ ((__unused_webpack_module, __webpack_exports__, __webpack_require__) => {
+
+
+// EXPORTS
+__webpack_require__.d(__webpack_exports__, {
+  H_: () => (/* reexport */ assertMcpConfigForRun),
+  VH: () => (/* reexport */ buildRuntimeMcpOptions),
+  V8: () => (/* reexport */ defaultMcpConnectionManager),
+  jD: () => (/* reexport */ toPiToolDefinitions)
+});
+
+// UNUSED EXPORTS: McpConfigError, McpConnectionError, McpConnectionManager, isStdioServer, mcpToolName, resolveMcpServer, resolveMcpServers
+
+// EXTERNAL MODULE: ../../node_modules/.pnpm/@modelcontextprotocol+sdk@1.29.0_zod@4.4.3/node_modules/@modelcontextprotocol/sdk/dist/esm/client/index.js + 7 modules
+var esm_client = __webpack_require__(53664);
+// EXTERNAL MODULE: ../../node_modules/.pnpm/@modelcontextprotocol+sdk@1.29.0_zod@4.4.3/node_modules/@modelcontextprotocol/sdk/dist/esm/client/stdio.js + 1 modules
+var stdio = __webpack_require__(95115);
+// EXTERNAL MODULE: ../../node_modules/.pnpm/@modelcontextprotocol+sdk@1.29.0_zod@4.4.3/node_modules/@modelcontextprotocol/sdk/dist/esm/client/streamableHttp.js + 8 modules
+var streamableHttp = __webpack_require__(26446);
+// EXTERNAL MODULE: ./src/sdk/errors.ts
+var errors = __webpack_require__(98229);
+;// CONCATENATED MODULE: ./src/sdk/runtimes/mcp/errors.ts
+
+/** Raised by the run-start preflight when MCP config is inconsistent. */
+class McpConfigError extends Error {
+    constructor(message) {
+        super(message);
+        this.name = 'McpConfigError';
+    }
+}
+/** Raised when a declared MCP server cannot be connected or queried. */
+class McpConnectionError extends Error {
+    constructor(serverName, cause) {
+        super(`MCP server "${serverName}" failed: ${(0,errors/* sanitizeErrorMessage */.$w)(cause instanceof Error ? cause.message : String(cause))}`);
+        this.name = 'McpConnectionError';
+    }
+}
+
+;// CONCATENATED MODULE: ./src/sdk/runtimes/mcp/connection-manager.ts
+/**
+ * Run-scoped pool of live MCP client connections.
+ *
+ * `runSkill` is called once per hunk, so connecting per call would respawn a
+ * subprocess (or reopen an HTTP session) for every hunk. The manager connects
+ * each server at most once, caches the client and its discovered tools keyed by
+ * server name, and reuses them across all hunks/skills in a run. Callers dispose
+ * it at the end of the run.
+ */
+
+
+
+
+const CLIENT_INFO = { name: 'warden', version: '1' };
+function createTransport(server) {
+    if (server.transport === 'stdio') {
+        const hasEnv = Object.keys(server.env).length > 0;
+        return new stdio/* StdioClientTransport */.oQ({
+            command: server.command,
+            args: server.args,
+            // Merge over the SDK's safe default env so the child still sees PATH etc.
+            ...(hasEnv ? { env: { ...(0,stdio/* getDefaultEnvironment */.fL)(), ...server.env } } : {}),
+        });
+    }
+    return new streamableHttp/* StreamableHTTPClientTransport */.j(new URL(server.url), {
+        requestInit: { headers: server.headers },
+    });
+}
+/** Join an MCP tool result's content into a single string for the agent. */
+function renderToolResult(result) {
+    const blocks = Array.isArray(result.content) ? result.content : [];
+    const text = blocks
+        .map((block) => {
+        if (block && typeof block === 'object' && 'text' in block && typeof block.text === 'string') {
+            return block.text;
+        }
+        const type = block && typeof block === 'object' && 'type' in block ? String(block.type) : 'unknown';
+        return `[${type} content]`;
+    })
+        .join('\n');
+    return result.isError ? `MCP tool reported an error: ${text}` : text;
+}
+class McpConnectionManager {
+    connections = new Map();
+    transportFactory;
+    /** `transportFactory` defaults to real stdio/HTTP transports; tests inject a fake. */
+    constructor(transportFactory = createTransport) {
+        this.transportFactory = transportFactory;
+    }
+    async getServerTools(server) {
+        return (await this.connect(server)).tools;
+    }
+    async callTool(server, toolName, args) {
+        const { client } = await this.connect(server);
+        const result = await client.callTool({ name: toolName, arguments: args });
+        return renderToolResult(result);
+    }
+    connect(server) {
+        const existing = this.connections.get(server.name);
+        if (existing) {
+            return existing;
+        }
+        const created = this.establish(server);
+        this.connections.set(server.name, created);
+        // Drop a failed connection so a later attempt can retry instead of
+        // resolving the cached rejection forever.
+        created.catch(() => {
+            if (this.connections.get(server.name) === created) {
+                this.connections.delete(server.name);
+            }
+        });
+        return created;
+    }
+    async establish(server) {
+        const client = new esm_client/* Client */.K(CLIENT_INFO);
+        try {
+            await client.connect(this.transportFactory(server));
+            const listed = await client.listTools();
+            const tools = listed.tools.map((tool) => ({
+                name: tool.name,
+                ...(tool.description ? { description: tool.description } : {}),
+                inputSchema: (tool.inputSchema ?? { type: 'object' }),
+            }));
+            return { client, tools };
+        }
+        catch (error) {
+            await client.close().catch(() => undefined);
+            throw new McpConnectionError(server.name, error);
+        }
+    }
+    /** Close every live connection. Safe to call more than once. */
+    async dispose() {
+        const pending = [...this.connections.values()];
+        this.connections.clear();
+        await Promise.allSettled(pending.map(async (connection) => {
+            const { client } = await connection;
+            await client.close();
+        }));
+    }
+}
+/** Process-default manager reused across a run; disposed by entry points. */
+const defaultMcpConnectionManager = new McpConnectionManager();
+
+// EXTERNAL MODULE: ../../node_modules/.pnpm/@earendil-works+pi-ai@0.78.0_@modelcontextprotocol+sdk@1.29.0_zod@4.4.3__ws@8.21.0_zod@4.4.3/node_modules/@earendil-works/pi-ai/dist/index.js + 13 modules
+var dist = __webpack_require__(78552);
+// EXTERNAL MODULE: ../../node_modules/.pnpm/@earendil-works+pi-coding-agent@0.78.0_@modelcontextprotocol+sdk@1.29.0_zod@4.4.3__ws@8.21.0_zod@4.4.3/node_modules/@earendil-works/pi-coding-agent/dist/index.js + 209 modules
+var pi_coding_agent_dist = __webpack_require__(50924);
+;// CONCATENATED MODULE: ./src/sdk/runtimes/mcp/to-pi-tools.ts
+/**
+ * Bridge discovered MCP tools into Pi `ToolDefinition`s.
+ *
+ * Each opted-in MCP tool becomes a first-class Pi custom tool named
+ * `mcp__<server>__<tool>`, using the server-advertised JSON schema for its
+ * parameters and proxying execution back through the connection manager. This
+ * mirrors `toPiCustomTools` in the Pi runtime adapter.
+ */
+
+
+
+/** The Pi tool name for a given MCP server + tool, e.g. `mcp__sentry__find_issue`. */
+function mcpToolName(serverName, toolName) {
+    return `mcp__${serverName}__${toolName}`;
+}
+/**
+ * Resolve a skill's MCP opt-in into Pi tool definitions. Servers referenced by
+ * the opt-in but absent from `resolvedServers` are skipped (the run-start
+ * preflight is responsible for rejecting those before analysis begins).
+ */
+async function toPiToolDefinitions(params) {
+    const { optIn, resolvedServers, provider } = params;
+    const definitions = [];
+    for (const [serverName, selection] of Object.entries(optIn)) {
+        const server = resolvedServers.get(serverName);
+        if (!server) {
+            continue;
+        }
+        const available = await provider.getServerTools(server);
+        if (selection !== '*') {
+            const offered = new Set(available.map((tool) => tool.name));
+            const missing = selection.filter((name) => !offered.has(name));
+            if (missing.length > 0) {
+                throw new McpConfigError(`MCP server "${serverName}" does not offer requested tool(s): ${missing.join(', ')}. ` +
+                    `Available: ${available.map((tool) => tool.name).join(', ') || '(none)'}.`);
+            }
+        }
+        const selected = selection === '*'
+            ? available
+            : available.filter((tool) => selection.includes(tool.name));
+        for (const tool of selected) {
+            const description = tool.description ?? `${tool.name} (via MCP server ${serverName})`;
+            definitions.push((0,pi_coding_agent_dist.defineTool)({
+                name: mcpToolName(serverName, tool.name),
+                label: mcpToolName(serverName, tool.name),
+                description,
+                promptSnippet: `${mcpToolName(serverName, tool.name)}: ${description}`,
+                parameters: dist.Type.Unsafe(tool.inputSchema),
+                async execute(_toolCallId, args) {
+                    const text = await provider.callTool(server, tool.name, args);
+                    return {
+                        content: [{ type: 'text', text }],
+                        details: { server: serverName, tool: tool.name },
+                    };
+                },
+            }));
+        }
+    }
+    return definitions;
+}
+
+;// CONCATENATED MODULE: ./src/sdk/runtimes/mcp/config.ts
+/** Matches `${VAR}` references embedded anywhere in a config string value. */
+const ENV_REF = /\$\{([^}]+)\}/g;
+/** True when a server config uses the stdio (subprocess) transport. */
+function isStdioServer(config) {
+    return 'command' in config;
+}
+/** Substitute `${VAR}` references in a single value, tracking any unset vars. */
+function interpolate(value, env, missing) {
+    return value.replace(ENV_REF, (_match, name) => {
+        const resolved = env[name];
+        if (resolved === undefined || resolved === '') {
+            missing.add(name);
+            return '';
+        }
+        return resolved;
+    });
+}
+function interpolateRecord(record, env, missing) {
+    const out = {};
+    for (const [key, value] of Object.entries(record ?? {})) {
+        out[key] = interpolate(value, env, missing);
+    }
+    return out;
+}
+/** Resolve one server config's `${VAR}` secrets against the given env. */
+function resolveMcpServer(config, env) {
+    const missing = new Set();
+    if (isStdioServer(config)) {
+        const server = {
+            name: config.name,
+            transport: 'stdio',
+            command: config.command,
+            args: config.args ?? [],
+            env: interpolateRecord(config.env, env, missing),
+        };
+        return { server, missing: [...missing] };
+    }
+    const server = {
+        name: config.name,
+        transport: 'http',
+        url: config.url,
+        headers: interpolateRecord(config.headers, env, missing),
+    };
+    return { server, missing: [...missing] };
+}
+/** Resolve every server config, keyed by name for lookup during preflight/runtime. */
+function resolveMcpServers(servers, env) {
+    const resolved = new Map();
+    for (const config of servers ?? []) {
+        resolved.set(config.name, resolveMcpServer(config, env));
+    }
+    return resolved;
+}
+
+;// CONCATENATED MODULE: ./src/sdk/runtimes/mcp/preflight.ts
+
+
+/**
+ * Throw `McpConfigError` when any skill opts into an undefined server or a
+ * server whose secrets are unset. `runtime` follows the codebase convention
+ * that an unset runtime means 'pi'.
+ */
+function assertMcpConfigForRun(params) {
+    const { runtime, servers, skills, env } = params;
+    if ((runtime ?? 'pi') !== 'pi') {
+        return;
+    }
+    const resolved = resolveMcpServers(servers, env);
+    const errors = [];
+    for (const skill of skills) {
+        if (!skill.mcp) {
+            continue;
+        }
+        for (const serverName of Object.keys(skill.mcp)) {
+            const server = resolved.get(serverName);
+            if (!server) {
+                errors.push(`Skill "${skill.name}" opts into undefined MCP server "${serverName}".`);
+                continue;
+            }
+            if (server.missing.length > 0) {
+                errors.push(`MCP server "${serverName}" (used by skill "${skill.name}") is missing env var(s): ${server.missing.join(', ')}.`);
+            }
+        }
+    }
+    if (errors.length > 0) {
+        throw new McpConfigError(errors.join('\n'));
+    }
+}
+
+;// CONCATENATED MODULE: ./src/sdk/runtimes/mcp/options.ts
+
+function buildRuntimeMcpOptions(optIn, servers, env) {
+    if (!optIn || Object.keys(optIn).length === 0) {
+        return undefined;
+    }
+    const allResolved = resolveMcpServers(servers, env);
+    const resolvedServers = new Map();
+    for (const serverName of Object.keys(optIn)) {
+        const resolved = allResolved.get(serverName);
+        if (resolved) {
+            resolvedServers.set(serverName, resolved.server);
+        }
+    }
+    if (resolvedServers.size === 0) {
+        return undefined;
+    }
+    return { resolvedServers, optIn };
+}
+
+;// CONCATENATED MODULE: ./src/sdk/runtimes/mcp/index.ts
+
+
+
+
+
+
+
+
+/***/ }),
+
 /***/ 85286:
 /***/ ((__unused_webpack_module, __webpack_exports__, __webpack_require__) => {
 
@@ -1135,15 +1465,16 @@ __webpack_require__.r(__webpack_exports__);
 /* harmony export */ });
 /* harmony import */ var _earendil_works_pi_coding_agent__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(50924);
 /* harmony import */ var _earendil_works_pi_ai__WEBPACK_IMPORTED_MODULE_1__ = __webpack_require__(78552);
-/* harmony import */ var zod__WEBPACK_IMPORTED_MODULE_10__ = __webpack_require__(7096);
+/* harmony import */ var zod__WEBPACK_IMPORTED_MODULE_11__ = __webpack_require__(7096);
 /* harmony import */ var _sentry_js__WEBPACK_IMPORTED_MODULE_2__ = __webpack_require__(30340);
 /* harmony import */ var _sentry_trace_js__WEBPACK_IMPORTED_MODULE_3__ = __webpack_require__(68016);
 /* harmony import */ var _utils_index_js__WEBPACK_IMPORTED_MODULE_4__ = __webpack_require__(36137);
 /* harmony import */ var _haiku_js__WEBPACK_IMPORTED_MODULE_5__ = __webpack_require__(39026);
 /* harmony import */ var _errors_js__WEBPACK_IMPORTED_MODULE_6__ = __webpack_require__(98229);
 /* harmony import */ var _otel_js__WEBPACK_IMPORTED_MODULE_7__ = __webpack_require__(85884);
-/* harmony import */ var _usage_js__WEBPACK_IMPORTED_MODULE_9__ = __webpack_require__(44759);
-/* harmony import */ var _model_selectors_js__WEBPACK_IMPORTED_MODULE_8__ = __webpack_require__(85286);
+/* harmony import */ var _usage_js__WEBPACK_IMPORTED_MODULE_10__ = __webpack_require__(44759);
+/* harmony import */ var _mcp_index_js__WEBPACK_IMPORTED_MODULE_8__ = __webpack_require__(30257);
+/* harmony import */ var _model_selectors_js__WEBPACK_IMPORTED_MODULE_9__ = __webpack_require__(85286);
 /**
  * Pi runtime adapter.
  *
@@ -1152,6 +1483,7 @@ __webpack_require__.r(__webpack_exports__);
  * contract. Warden still owns prompt construction, finding extraction,
  * verification, deduplication, and reporting.
  */
+
 
 
 
@@ -1179,8 +1511,8 @@ function errorMessage(error) {
     return (0,_errors_js__WEBPACK_IMPORTED_MODULE_6__/* .sanitizeErrorMessage */ .$w)(error instanceof Error ? error.message : String(error));
 }
 function parseModelSelector(model) {
-    if (!(0,_model_selectors_js__WEBPACK_IMPORTED_MODULE_8__/* .isPiModelSelector */ .E_)(model)) {
-        throw new _model_selectors_js__WEBPACK_IMPORTED_MODULE_8__/* .InvalidPiModelSelectorError */ .n1({ option: 'model', model });
+    if (!(0,_model_selectors_js__WEBPACK_IMPORTED_MODULE_9__/* .isPiModelSelector */ .E_)(model)) {
+        throw new _model_selectors_js__WEBPACK_IMPORTED_MODULE_9__/* .InvalidPiModelSelectorError */ .n1({ option: 'model', model });
     }
     const slashIndex = model.indexOf('/');
     return {
@@ -1287,7 +1619,7 @@ function piUsageToStats(usage) {
     };
 }
 function aggregatePiUsage(messages) {
-    return (0,_usage_js__WEBPACK_IMPORTED_MODULE_9__/* .aggregateUsage */ .Z$)(messages.map((message) => piUsageToStats(message.usage)));
+    return (0,_usage_js__WEBPACK_IMPORTED_MODULE_10__/* .aggregateUsage */ .Z$)(messages.map((message) => piUsageToStats(message.usage)));
 }
 function statusFromPiMessage(message, hitMaxTurns) {
     if (hitMaxTurns) {
@@ -1600,7 +1932,7 @@ async function runPiPrompt(options) {
     };
 }
 function toStructuredPrompt(kind, task, schema) {
-    const jsonSchema = zod__WEBPACK_IMPORTED_MODULE_10__/* .toJSONSchema */ .bl(schema);
+    const jsonSchema = zod__WEBPACK_IMPORTED_MODULE_11__/* .toJSONSchema */ .bl(schema);
     return [
         `You are Warden's ${kind} structured-output runtime.`,
         task ? `Task: ${task}` : undefined,
@@ -1710,7 +2042,7 @@ async function runStructured(request) {
         }
         catch (error) {
             span.setAttribute('error.type', error instanceof Error ? error.name : '_OTHER');
-            return { success: false, error: errorMessage(error), usage: (0,_usage_js__WEBPACK_IMPORTED_MODULE_9__/* .emptyUsage */ .ly)() };
+            return { success: false, error: errorMessage(error), usage: (0,_usage_js__WEBPACK_IMPORTED_MODULE_10__/* .emptyUsage */ .ly)() };
         }
     });
 }
@@ -1735,6 +2067,13 @@ const piRuntime = {
             (0,_otel_js__WEBPACK_IMPORTED_MODULE_7__/* .setGenAiSystemInstructionsAttr */ .kq)(span, systemPrompt);
             (0,_otel_js__WEBPACK_IMPORTED_MODULE_7__/* .setGenAiInputMessagesAttr */ .uQ)(span, [{ role: 'user', content: userPrompt }]);
             try {
+                const mcpTools = request.mcp
+                    ? await (0,_mcp_index_js__WEBPACK_IMPORTED_MODULE_8__/* .toPiToolDefinitions */ .jD)({
+                        optIn: request.mcp.optIn,
+                        resolvedServers: request.mcp.resolvedServers,
+                        provider: request.mcp.provider ?? _mcp_index_js__WEBPACK_IMPORTED_MODULE_8__/* .defaultMcpConnectionManager */ .V8,
+                    })
+                    : [];
                 const run = await runPiPrompt({
                     cwd: repoPath,
                     systemPrompt,
@@ -1743,7 +2082,8 @@ const piRuntime = {
                     model,
                     legacyAnthropicApiKey: apiKey,
                     customProviders: providerOptions,
-                    toolNames: skillTools.toolNames,
+                    toolNames: [...skillTools.toolNames, ...mcpTools.map((tool) => tool.name)],
+                    customTools: mcpTools.length > 0 ? mcpTools : undefined,
                     maxTurns,
                     effort,
                     abortController,
@@ -2689,6 +3029,12 @@ const FindingSchema = zod__WEBPACK_IMPORTED_MODULE_0__/* .object */ .Ik({
     location: LocationSchema.optional(),
     additionalLocations: zod__WEBPACK_IMPORTED_MODULE_0__/* .array */ .YO(LocationSchema).optional(),
     sourceSnippet: SourceSnippetSchema.optional(),
+    /**
+     * Full replacement text for exactly the lines in `location`
+     * (startLine..endLine). When present and enabled, rendered as a committable
+     * GitHub ```suggestion block. Requires `location`.
+     */
+    suggestion: zod__WEBPACK_IMPORTED_MODULE_0__/* .string */ .Yj().optional(),
     elapsedMs: zod__WEBPACK_IMPORTED_MODULE_0__/* .number */ .ai().nonnegative().optional(),
 });
 /**

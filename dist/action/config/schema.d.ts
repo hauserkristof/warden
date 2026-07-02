@@ -34,6 +34,50 @@ export declare const ToolConfigSchema: z.ZodObject<{
     }>>>;
 }, z.core.$strip>;
 export type ToolConfig = z.infer<typeof ToolConfigSchema>;
+export declare const McpStdioServerSchema: z.ZodObject<{
+    name: z.ZodString;
+    command: z.ZodString;
+    args: z.ZodOptional<z.ZodArray<z.ZodString>>;
+    env: z.ZodOptional<z.ZodRecord<z.ZodString, z.ZodString>>;
+}, z.core.$strict>;
+export type McpStdioServer = z.infer<typeof McpStdioServerSchema>;
+export declare const McpHttpServerSchema: z.ZodObject<{
+    name: z.ZodString;
+    url: z.ZodString;
+    headers: z.ZodOptional<z.ZodRecord<z.ZodString, z.ZodString>>;
+}, z.core.$strict>;
+export type McpHttpServer = z.infer<typeof McpHttpServerSchema>;
+export declare const McpServerConfigSchema: z.ZodUnion<readonly [z.ZodObject<{
+    name: z.ZodString;
+    command: z.ZodString;
+    args: z.ZodOptional<z.ZodArray<z.ZodString>>;
+    env: z.ZodOptional<z.ZodRecord<z.ZodString, z.ZodString>>;
+}, z.core.$strict>, z.ZodObject<{
+    name: z.ZodString;
+    url: z.ZodString;
+    headers: z.ZodOptional<z.ZodRecord<z.ZodString, z.ZodString>>;
+}, z.core.$strict>]>;
+export type McpServerConfig = z.infer<typeof McpServerConfigSchema>;
+export declare const McpConfigSchema: z.ZodObject<{
+    servers: z.ZodDefault<z.ZodArray<z.ZodUnion<readonly [z.ZodObject<{
+        name: z.ZodString;
+        command: z.ZodString;
+        args: z.ZodOptional<z.ZodArray<z.ZodString>>;
+        env: z.ZodOptional<z.ZodRecord<z.ZodString, z.ZodString>>;
+    }, z.core.$strict>, z.ZodObject<{
+        name: z.ZodString;
+        url: z.ZodString;
+        headers: z.ZodOptional<z.ZodRecord<z.ZodString, z.ZodString>>;
+    }, z.core.$strict>]>>>;
+}, z.core.$strip>;
+export type McpConfig = z.infer<typeof McpConfigSchema>;
+/**
+ * Per-skill MCP opt-in, declared in SKILL.md frontmatter. Maps a global server
+ * name to either an explicit tool allowlist or "*" for all of the server's
+ * tools. A skill only ever sees the servers/tools it names (least privilege).
+ */
+export declare const SkillMcpOptInSchema: z.ZodRecord<z.ZodString, z.ZodUnion<readonly [z.ZodLiteral<"*">, z.ZodArray<z.ZodString>]>>;
+export type SkillMcpOptIn = z.infer<typeof SkillMcpOptInSchema>;
 export declare const SkillDefinitionSchema: z.ZodObject<{
     name: z.ZodString;
     description: z.ZodString;
@@ -60,6 +104,7 @@ export declare const SkillDefinitionSchema: z.ZodObject<{
             WebSearch: "WebSearch";
         }>>>;
     }, z.core.$strip>>;
+    mcp: z.ZodOptional<z.ZodRecord<z.ZodString, z.ZodUnion<readonly [z.ZodLiteral<"*">, z.ZodArray<z.ZodString>]>>>;
     rootDir: z.ZodOptional<z.ZodString>;
 }, z.core.$strip>;
 export type SkillDefinition = z.infer<typeof SkillDefinitionSchema>;
@@ -68,9 +113,9 @@ export declare const ScheduleConfigSchema: z.ZodObject<{
 }, z.core.$strip>;
 export type ScheduleConfig = z.infer<typeof ScheduleConfigSchema>;
 export declare const TriggerTypeSchema: z.ZodEnum<{
-    local: "local";
     pull_request: "pull_request";
     schedule: "schedule";
+    local: "local";
 }>;
 export type TriggerType = z.infer<typeof TriggerTypeSchema>;
 export { RuntimeNameSchema };
@@ -110,9 +155,9 @@ export declare const VerificationConfigSchema: z.ZodObject<{
 export type VerificationConfig = z.infer<typeof VerificationConfigSchema>;
 export declare const SkillTriggerSchema: z.ZodObject<{
     type: z.ZodEnum<{
-        local: "local";
         pull_request: "pull_request";
         schedule: "schedule";
+        local: "local";
     }>;
     actions: z.ZodOptional<z.ZodArray<z.ZodString>>;
     draft: z.ZodOptional<z.ZodBoolean>;
@@ -132,6 +177,7 @@ export declare const SkillTriggerSchema: z.ZodObject<{
     maxFindings: z.ZodOptional<z.ZodNumber>;
     reportOnSuccess: z.ZodOptional<z.ZodBoolean>;
     requestChanges: z.ZodOptional<z.ZodBoolean>;
+    suggestions: z.ZodOptional<z.ZodBoolean>;
     failCheck: z.ZodOptional<z.ZodBoolean>;
     model: z.ZodOptional<z.ZodString>;
     maxTurns: z.ZodOptional<z.ZodNumber>;
@@ -166,6 +212,7 @@ export declare const SkillConfigSchema: z.ZodObject<{
     maxFindings: z.ZodOptional<z.ZodNumber>;
     reportOnSuccess: z.ZodOptional<z.ZodBoolean>;
     requestChanges: z.ZodOptional<z.ZodBoolean>;
+    suggestions: z.ZodOptional<z.ZodBoolean>;
     failCheck: z.ZodOptional<z.ZodBoolean>;
     model: z.ZodOptional<z.ZodString>;
     maxTurns: z.ZodOptional<z.ZodNumber>;
@@ -177,9 +224,9 @@ export declare const SkillConfigSchema: z.ZodObject<{
     }>>;
     triggers: z.ZodOptional<z.ZodArray<z.ZodObject<{
         type: z.ZodEnum<{
-            local: "local";
             pull_request: "pull_request";
             schedule: "schedule";
+            local: "local";
         }>;
         actions: z.ZodOptional<z.ZodArray<z.ZodString>>;
         draft: z.ZodOptional<z.ZodBoolean>;
@@ -199,6 +246,7 @@ export declare const SkillConfigSchema: z.ZodObject<{
         maxFindings: z.ZodOptional<z.ZodNumber>;
         reportOnSuccess: z.ZodOptional<z.ZodBoolean>;
         requestChanges: z.ZodOptional<z.ZodBoolean>;
+        suggestions: z.ZodOptional<z.ZodBoolean>;
         failCheck: z.ZodOptional<z.ZodBoolean>;
         model: z.ZodOptional<z.ZodString>;
         maxTurns: z.ZodOptional<z.ZodNumber>;
@@ -348,12 +396,13 @@ export declare const DefaultsSchema: z.ZodObject<{
     maxFindings: z.ZodOptional<z.ZodNumber>;
     reportOnSuccess: z.ZodOptional<z.ZodBoolean>;
     requestChanges: z.ZodOptional<z.ZodBoolean>;
+    suggestions: z.ZodOptional<z.ZodBoolean>;
     failCheck: z.ZodOptional<z.ZodBoolean>;
     model: z.ZodOptional<z.ZodString>;
     maxTurns: z.ZodOptional<z.ZodNumber>;
     runtime: z.ZodOptional<z.ZodEnum<{
-        claude: "claude";
         pi: "pi";
+        claude: "claude";
     }>>;
     agent: z.ZodOptional<z.ZodObject<{
         model: z.ZodOptional<z.ZodString>;
@@ -471,12 +520,13 @@ export declare const WardenConfigSchema: z.ZodObject<{
         maxFindings: z.ZodOptional<z.ZodNumber>;
         reportOnSuccess: z.ZodOptional<z.ZodBoolean>;
         requestChanges: z.ZodOptional<z.ZodBoolean>;
+        suggestions: z.ZodOptional<z.ZodBoolean>;
         failCheck: z.ZodOptional<z.ZodBoolean>;
         model: z.ZodOptional<z.ZodString>;
         maxTurns: z.ZodOptional<z.ZodNumber>;
         runtime: z.ZodOptional<z.ZodEnum<{
-            claude: "claude";
             pi: "pi";
+            claude: "claude";
         }>>;
         agent: z.ZodOptional<z.ZodObject<{
             model: z.ZodOptional<z.ZodString>;
@@ -580,6 +630,7 @@ export declare const WardenConfigSchema: z.ZodObject<{
         maxFindings: z.ZodOptional<z.ZodNumber>;
         reportOnSuccess: z.ZodOptional<z.ZodBoolean>;
         requestChanges: z.ZodOptional<z.ZodBoolean>;
+        suggestions: z.ZodOptional<z.ZodBoolean>;
         failCheck: z.ZodOptional<z.ZodBoolean>;
         model: z.ZodOptional<z.ZodString>;
         maxTurns: z.ZodOptional<z.ZodNumber>;
@@ -591,9 +642,9 @@ export declare const WardenConfigSchema: z.ZodObject<{
         }>>;
         triggers: z.ZodOptional<z.ZodArray<z.ZodObject<{
             type: z.ZodEnum<{
-                local: "local";
                 pull_request: "pull_request";
                 schedule: "schedule";
+                local: "local";
             }>;
             actions: z.ZodOptional<z.ZodArray<z.ZodString>>;
             draft: z.ZodOptional<z.ZodBoolean>;
@@ -613,6 +664,7 @@ export declare const WardenConfigSchema: z.ZodObject<{
             maxFindings: z.ZodOptional<z.ZodNumber>;
             reportOnSuccess: z.ZodOptional<z.ZodBoolean>;
             requestChanges: z.ZodOptional<z.ZodBoolean>;
+            suggestions: z.ZodOptional<z.ZodBoolean>;
             failCheck: z.ZodOptional<z.ZodBoolean>;
             model: z.ZodOptional<z.ZodString>;
             maxTurns: z.ZodOptional<z.ZodNumber>;
@@ -637,6 +689,18 @@ export declare const WardenConfigSchema: z.ZodObject<{
             auto: "auto";
         }>>;
         retentionDays: z.ZodDefault<z.ZodNumber>;
+    }, z.core.$strip>>;
+    mcp: z.ZodOptional<z.ZodObject<{
+        servers: z.ZodDefault<z.ZodArray<z.ZodUnion<readonly [z.ZodObject<{
+            name: z.ZodString;
+            command: z.ZodString;
+            args: z.ZodOptional<z.ZodArray<z.ZodString>>;
+            env: z.ZodOptional<z.ZodRecord<z.ZodString, z.ZodString>>;
+        }, z.core.$strict>, z.ZodObject<{
+            name: z.ZodString;
+            url: z.ZodString;
+            headers: z.ZodOptional<z.ZodRecord<z.ZodString, z.ZodString>>;
+        }, z.core.$strict>]>>>;
     }, z.core.$strip>>;
 }, z.core.$strip>;
 export type WardenConfig = z.infer<typeof WardenConfigSchema>;

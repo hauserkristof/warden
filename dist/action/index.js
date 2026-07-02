@@ -8,7 +8,7 @@ __nccwpck_require__.a(module, async (__webpack_handle_async_dependencies__, __we
 /* harmony import */ var _pi_ncc_compat_js__WEBPACK_IMPORTED_MODULE_0__ = __nccwpck_require__(54144);
 
 await (0,_pi_ncc_compat_js__WEBPACK_IMPORTED_MODULE_0__/* .preloadPiRuntimeForActionBundle */ .A)();
-await Promise.all(/* import() */[__nccwpck_require__.e(55), __nccwpck_require__.e(675), __nccwpck_require__.e(552), __nccwpck_require__.e(578), __nccwpck_require__.e(34), __nccwpck_require__.e(905), __nccwpck_require__.e(229), __nccwpck_require__.e(211)]).then(__nccwpck_require__.bind(__nccwpck_require__, 61211));
+await Promise.all(/* import() */[__nccwpck_require__.e(55), __nccwpck_require__.e(675), __nccwpck_require__.e(552), __nccwpck_require__.e(379), __nccwpck_require__.e(372), __nccwpck_require__.e(993), __nccwpck_require__.e(229), __nccwpck_require__.e(211)]).then(__nccwpck_require__.bind(__nccwpck_require__, 61211));
 
 __webpack_async_result__();
 } catch(e) { __webpack_async_result__(e); } }, 1);
@@ -51,7 +51,7 @@ async function preloadPiProviderModulesForActionBundle() {
  * Preload Pi before action initialization so ncc's dynamic-import rewrite for
  * Pi's env-key helper and node-only providers cannot terminate the bundled GitHub Action.
  */
-async function preloadPiRuntimeForActionBundle(importPiRuntime = () => Promise.all(/* import() */[__nccwpck_require__.e(55), __nccwpck_require__.e(675), __nccwpck_require__.e(552), __nccwpck_require__.e(578), __nccwpck_require__.e(34), __nccwpck_require__.e(229)]).then(__nccwpck_require__.bind(__nccwpck_require__, 19113)), unhandledRejections = process, preloadProviders = preloadPiProviderModulesForActionBundle) {
+async function preloadPiRuntimeForActionBundle(importPiRuntime = () => Promise.all(/* import() */[__nccwpck_require__.e(55), __nccwpck_require__.e(675), __nccwpck_require__.e(552), __nccwpck_require__.e(379), __nccwpck_require__.e(372), __nccwpck_require__.e(229)]).then(__nccwpck_require__.bind(__nccwpck_require__, 19113)), unhandledRejections = process, preloadProviders = preloadPiProviderModulesForActionBundle) {
     let unexpectedRejection;
     const onUnhandledRejection = (reason) => {
         if (isNccPiBuiltinImportFailure(reason)) {

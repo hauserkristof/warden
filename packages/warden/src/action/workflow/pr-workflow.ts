@@ -43,6 +43,7 @@ import type { ActionInputs } from '../inputs.js';
 import { executeTrigger } from '../triggers/executor.js';
 import type { TriggerCheckReporter, TriggerResult } from '../triggers/executor.js';
 import { postTriggerReview } from '../review/poster.js';
+import { postPrSummary } from '../reporting/pr-summary.js';
 import { shouldResolveStaleComments } from '../review/coordination.js';
 import type { FindingObservation } from '../reporting/outcomes.js';
 import type { RuntimeName } from '../../sdk/runtimes/index.js';
@@ -621,6 +622,13 @@ async function postReviewsAndTrackFailures(
         failureReasons.push(`${result.triggerName}: Found ${count} ${result.failOn}+ severity issues`);
       }
     }
+  }
+
+  // Sticky, CodeRabbit-style PR summary aggregated across all skills. Posted
+  // after inline comments so it can deep-link each finding. Never throws;
+  // gated by the pr-summary input (default on).
+  if (inputs.prSummary !== false) {
+    await postPrSummary(octokit, context, results);
   }
 
   return {

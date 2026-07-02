@@ -84,6 +84,7 @@ export declare const FindingObservationSchema: z.ZodDiscriminatedUnion<[z.ZodObj
                 highlighted: z.ZodOptional<z.ZodBoolean>;
             }, z.core.$strip>>;
         }, z.core.$strip>>;
+        suggestion: z.ZodOptional<z.ZodString>;
         elapsedMs: z.ZodOptional<z.ZodNumber>;
     }, z.core.$strip>;
     skill: z.ZodOptional<z.ZodString>;
@@ -127,6 +128,7 @@ export declare const FindingObservationSchema: z.ZodDiscriminatedUnion<[z.ZodObj
                 highlighted: z.ZodOptional<z.ZodBoolean>;
             }, z.core.$strip>>;
         }, z.core.$strip>>;
+        suggestion: z.ZodOptional<z.ZodString>;
         elapsedMs: z.ZodOptional<z.ZodNumber>;
     }, z.core.$strip>;
     skill: z.ZodOptional<z.ZodString>;
@@ -185,6 +187,7 @@ export declare const FindingObservationSchema: z.ZodDiscriminatedUnion<[z.ZodObj
                 highlighted: z.ZodOptional<z.ZodBoolean>;
             }, z.core.$strip>>;
         }, z.core.$strip>>;
+        suggestion: z.ZodOptional<z.ZodString>;
         elapsedMs: z.ZodOptional<z.ZodNumber>;
     }, z.core.$strip>;
     skill: z.ZodOptional<z.ZodString>;
@@ -232,6 +235,7 @@ export declare const FindingObservationSchema: z.ZodDiscriminatedUnion<[z.ZodObj
                 highlighted: z.ZodOptional<z.ZodBoolean>;
             }, z.core.$strip>>;
         }, z.core.$strip>>;
+        suggestion: z.ZodOptional<z.ZodString>;
         elapsedMs: z.ZodOptional<z.ZodNumber>;
     }, z.core.$strip>;
     skill: z.ZodOptional<z.ZodString>;
@@ -279,6 +283,7 @@ export declare const FindingObservationSchema: z.ZodDiscriminatedUnion<[z.ZodObj
                 highlighted: z.ZodOptional<z.ZodBoolean>;
             }, z.core.$strip>>;
         }, z.core.$strip>>;
+        suggestion: z.ZodOptional<z.ZodString>;
         elapsedMs: z.ZodOptional<z.ZodNumber>;
     }, z.core.$strip>;
     skill: z.ZodOptional<z.ZodString>;

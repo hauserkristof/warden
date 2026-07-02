@@ -32,6 +32,8 @@ export interface ActionInputs {
     parallel: number;
     /** Whether to dedup findings against non-Warden (external) PR comments. Default: true */
     dedupExternal?: boolean;
+    /** Whether to post the sticky, aggregated PR summary comment. Default: true */
+    prSummary?: boolean;
 }
 /**
  * Parse action inputs from the GitHub Actions environment.

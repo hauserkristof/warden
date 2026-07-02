@@ -126,6 +126,7 @@ export declare const JsonlChunkRecordSchema: z.ZodObject<{
                 highlighted: z.ZodOptional<z.ZodBoolean>;
             }, z.core.$strip>>;
         }, z.core.$strip>>;
+        suggestion: z.ZodOptional<z.ZodString>;
         elapsedMs: z.ZodOptional<z.ZodNumber>;
     }, z.core.$strip>>;
     usageBreakdown: z.ZodOptional<z.ZodObject<{
@@ -296,6 +297,7 @@ export declare const JsonlRecordSchema: z.ZodObject<{
                 highlighted: z.ZodOptional<z.ZodBoolean>;
             }, z.core.$strip>>;
         }, z.core.$strip>>;
+        suggestion: z.ZodOptional<z.ZodString>;
         elapsedMs: z.ZodOptional<z.ZodNumber>;
     }, z.core.$strip>>;
     metadata: z.ZodOptional<z.ZodRecord<z.ZodString, z.ZodUnknown>>;
