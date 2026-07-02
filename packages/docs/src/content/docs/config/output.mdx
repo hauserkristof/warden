@@ -47,6 +47,13 @@ and runtime defaults live under [Models and Runtimes](/config/models/).
   </div>
   <div>
     <dt>
+      <code>suggestions</code>
+      <span class="sentry-property-meta">boolean</span>
+    </dt>
+    <dd>Render committable <code>```suggestion</code> blocks for findings that carry a fix. Default: <code>false</code>.</dd>
+  </div>
+  <div>
+    <dt>
       <code>failCheck</code>
       <span class="sentry-property-meta">boolean</span>
     </dt>
@@ -62,6 +69,26 @@ reportOn = "medium"
 maxFindings = 20
 ```
 
+## Suggestions
+
+With `suggestions = true`, any finding that carries a concrete fix is rendered as
+a GitHub [suggested change](https://docs.github.com/en/pull-requests/collaborating-with-pull-requests/reviewing-changes-in-pull-requests/reviewing-proposed-changes-in-a-pull-request#applying-suggested-changes)
+the author can commit in one click. The suggestion replaces the exact lines the
+comment is anchored to. Findings without a fix render as normal comments.
+
+Suggestions are opt-in and off by default. It is a `warden.toml` setting, not a
+workflow input, and inherits across defaults, skills, and triggers like the other
+output fields.
+
+Severity flair (`🔴 HIGH`, `🟠 MEDIUM`, `🟡 LOW`) is added to every inline comment
+regardless of this setting.
+
+```toml title="warden.toml"
+[[skills]]
+name = "security-review"
+suggestions = true
+```
+
 ## Defaults
 
 Defaults are inherited by all skills. Individual skills and triggers can
@@ -72,6 +99,7 @@ override them.
 failOn = "high"
 reportOn = "medium"
 requestChanges = false
+suggestions = false
 failCheck = false
 ignorePaths = ["**/vendor/**", "**/node_modules/**"]
 ```
