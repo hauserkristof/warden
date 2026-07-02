@@ -1246,6 +1246,7 @@ function parseActionInputs() {
     const parallelParsed = parseInt(getInput('parallel') || String(_utils_index_js__WEBPACK_IMPORTED_MODULE_1__/* .DEFAULT_CONCURRENCY */ .WH), 10);
     const requestChanges = parseBooleanInput(getInput('request-changes'));
     const failCheck = parseBooleanInput(getInput('fail-check'));
+    const dedupExternal = parseBooleanInput(getInput('dedup-external'));
     return {
         anthropicApiKey,
         oauthToken,
@@ -1261,6 +1262,7 @@ function parseActionInputs() {
         requestChanges,
         failCheck,
         parallel: Number.isNaN(parallelParsed) ? _utils_index_js__WEBPACK_IMPORTED_MODULE_1__/* .DEFAULT_CONCURRENCY */ .WH : parallelParsed,
+        dedupExternal,
     };
 }
 /**
@@ -3002,11 +3004,17 @@ async function postReviewsAndTrackFailures(octokit, context, results, inputs, au
     if (context.pullRequest) {
         try {
             fetchedComments = await (0,_output_dedup_js__WEBPACK_IMPORTED_MODULE_7__/* .fetchExistingComments */ .kX)(octokit, context.repository.owner, context.repository.name, context.pullRequest.number);
-            existingComments = [...fetchedComments];
+            // dedup-external=false: only dedup against Warden's own comments, so
+            // findings are posted even when another bot/reviewer covered the issue.
+            existingComments =
+                inputs.dedupExternal === false
+                    ? fetchedComments.filter((c) => c.isWarden)
+                    : [...fetchedComments];
             if (fetchedComments.length > 0) {
                 const wardenCount = fetchedComments.filter((c) => c.isWarden).length;
                 const externalCount = fetchedComments.length - wardenCount;
-                (0,_cli_output_tty_js__WEBPACK_IMPORTED_MODULE_22__/* .logAction */ .d5)(`Found ${fetchedComments.length} existing comments for deduplication (${wardenCount} Warden, ${externalCount} external)`);
+                const externalNote = inputs.dedupExternal === false ? `, ${externalCount} external excluded by dedup-external=false` : `, ${externalCount} external`;
+                (0,_cli_output_tty_js__WEBPACK_IMPORTED_MODULE_22__/* .logAction */ .d5)(`Found ${fetchedComments.length} existing comments for deduplication (${wardenCount} Warden${externalNote})`);
             }
         }
         catch (error) {

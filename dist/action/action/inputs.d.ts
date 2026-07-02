@@ -30,6 +30,8 @@ export interface ActionInputs {
     failCheck?: boolean;
     /** Max concurrent trigger executions */
     parallel: number;
+    /** Whether to dedup findings against non-Warden (external) PR comments. Default: true */
+    dedupExternal?: boolean;
 }
 /**
  * Parse action inputs from the GitHub Actions environment.

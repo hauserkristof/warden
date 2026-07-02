@@ -548,12 +548,19 @@ async function postReviewsAndTrackFailures(
         context.repository.name,
         context.pullRequest.number
       );
-      existingComments = [...fetchedComments];
+      // dedup-external=false: only dedup against Warden's own comments, so
+      // findings are posted even when another bot/reviewer covered the issue.
+      existingComments =
+        inputs.dedupExternal === false
+          ? fetchedComments.filter((c) => c.isWarden)
+          : [...fetchedComments];
       if (fetchedComments.length > 0) {
         const wardenCount = fetchedComments.filter((c) => c.isWarden).length;
         const externalCount = fetchedComments.length - wardenCount;
+        const externalNote =
+          inputs.dedupExternal === false ? `, ${externalCount} external excluded by dedup-external=false` : `, ${externalCount} external`;
         logAction(
-          `Found ${fetchedComments.length} existing comments for deduplication (${wardenCount} Warden, ${externalCount} external)`
+          `Found ${fetchedComments.length} existing comments for deduplication (${wardenCount} Warden${externalNote})`
         );
       }
     } catch (error) {

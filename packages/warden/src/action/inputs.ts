@@ -39,6 +39,8 @@ export interface ActionInputs {
   failCheck?: boolean;
   /** Max concurrent trigger executions */
   parallel: number;
+  /** Whether to dedup findings against non-Warden (external) PR comments. Default: true */
+  dedupExternal?: boolean;
 }
 
 // -----------------------------------------------------------------------------
@@ -111,6 +113,7 @@ export function parseActionInputs(): ActionInputs {
 
   const requestChanges = parseBooleanInput(getInput('request-changes'));
   const failCheck = parseBooleanInput(getInput('fail-check'));
+  const dedupExternal = parseBooleanInput(getInput('dedup-external'));
 
   return {
     anthropicApiKey,
@@ -127,6 +130,7 @@ export function parseActionInputs(): ActionInputs {
     requestChanges,
     failCheck,
     parallel: Number.isNaN(parallelParsed) ? DEFAULT_CONCURRENCY : parallelParsed,
+    dedupExternal,
   };
 }
 
