@@ -626,6 +626,38 @@ describe('resolveSkillConfigs', () => {
 });
 
 describe('mergeWardenConfigs', () => {
+  it('inherits base MCP servers when the repo layer omits its own', () => {
+    const baseConfig: WardenConfig = {
+      version: 1,
+      skills: [],
+      mcp: { servers: [{ name: 'sentry', command: 'npx', args: ['-y', '@sentry/mcp-server'] }] },
+    };
+    const repoConfig: WardenConfig = { version: 1, skills: [] };
+
+    const merged = mergeWardenConfigs(baseConfig, repoConfig);
+
+    expect(merged.mcp?.servers).toEqual([
+      { name: 'sentry', command: 'npx', args: ['-y', '@sentry/mcp-server'] },
+    ]);
+  });
+
+  it('lets a repo MCP block replace the base servers', () => {
+    const baseConfig: WardenConfig = {
+      version: 1,
+      skills: [],
+      mcp: { servers: [{ name: 'sentry', command: 'npx' }] },
+    };
+    const repoConfig: WardenConfig = {
+      version: 1,
+      skills: [],
+      mcp: { servers: [{ name: 'docs', url: 'https://mcp.internal/sse' }] },
+    };
+
+    const merged = mergeWardenConfigs(baseConfig, repoConfig);
+
+    expect(merged.mcp?.servers.map((s) => s.name)).toEqual(['docs']);
+  });
+
   it('merges org defaults with repo overrides and appends skills', () => {
     const baseConfig: WardenConfig = {
       version: 1,

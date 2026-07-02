@@ -10,6 +10,7 @@ import { Sentry } from '../../sentry.js';
 import { ActionFailedError } from '../workflow/base.js';
 import type { ResolvedTrigger } from '../../config/loader.js';
 import type { EventContext, SkillReport, SeverityThreshold, ConfidenceThreshold } from '../../types/index.js';
+import type { McpServerConfig } from '../../config/schema.js';
 import type { RenderResult } from '../../output/types.js';
 import type { OutputMode } from '../../cli/output/tty.js';
 import { resolveSkillAsync } from '../../skills/loader.js';
@@ -98,6 +99,8 @@ export interface TriggerExecutorDeps {
   globalRequestChanges?: boolean;
   /** Global fail-check from action inputs (trigger-specific takes precedence) */
   globalFailCheck?: boolean;
+  /** Global MCP servers available to skills that opt in (Pi runtime only). */
+  mcpServers?: McpServerConfig[];
   /** Global semaphore for limiting concurrent file analyses across triggers */
   semaphore?: Semaphore;
   /** Shared controller for stopping the whole action run */
@@ -207,6 +210,7 @@ export async function executeTrigger(
             verifyFindings: trigger.verifyFindings,
             abortController: deps.abortController,
             circuitBreaker: deps.circuitBreaker,
+            mcpServers: deps.mcpServers,
           },
         };
 

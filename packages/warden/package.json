@@ -53,6 +53,7 @@
     "@earendil-works/pi-ai": "^0.78.0",
     "@earendil-works/pi-coding-agent": "^0.78.0",
     "@inquirer/select": "^5.1.5",
+    "@modelcontextprotocol/sdk": "^1.29.0",
     "@octokit/rest": "^22.0.1",
     "@sentry/dotagents-lib": "^1.17.0",
     "@sentry/node": "^10.53.1",

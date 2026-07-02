@@ -46,7 +46,8 @@ import { postTriggerReview } from '../review/poster.js';
 import { shouldResolveStaleComments } from '../review/coordination.js';
 import type { FindingObservation } from '../reporting/outcomes.js';
 import type { RuntimeName } from '../../sdk/runtimes/index.js';
-import type { ProvidersConfig } from '../../config/schema.js';
+import { defaultMcpConnectionManager } from '../../sdk/runtimes/index.js';
+import type { McpServerConfig, ProvidersConfig } from '../../config/schema.js';
 import { canUseRuntimeAuth } from '../../sdk/extract.js';
 import { ProviderFailureCircuitBreaker } from '../../sdk/circuit-breaker.js';
 import {
@@ -96,6 +97,8 @@ interface InitResult {
   matchedTriggers: ResolvedTrigger[];
   skippedTriggers: ResolvedTrigger[];
   skipCoreCheck?: SkippedCoreCheck;
+  /** Global MCP servers available to skills that opt in (Pi runtime only). */
+  mcpServers?: McpServerConfig[];
 }
 
 interface GitHubSetupResult {
@@ -359,7 +362,14 @@ async function initializeWorkflow(
       console.log('No triggers matched for this event');
     }
 
-    return { context, runnerConcurrency, auxiliaryOptions, matchedTriggers, skippedTriggers };
+    return {
+      context,
+      runnerConcurrency,
+      auxiliaryOptions,
+      matchedTriggers,
+      skippedTriggers,
+      mcpServers: layered.config.mcp?.servers,
+    };
   } catch (error) {
     if (
       error instanceof ConfigLoadError &&
@@ -493,7 +503,7 @@ async function executeAllTriggers(
   context: EventContext,
   runnerConcurrency: number | undefined,
   inputs: ActionInputs,
-  options: { checks?: TriggerCheckReporter } = {}
+  options: { checks?: TriggerCheckReporter; mcpServers?: McpServerConfig[] } = {}
 ): Promise<TriggerResult[]> {
   const concurrency = runnerConcurrency ?? inputs.parallel;
   const runtimeEnv = await prepareRuntimeEnvironment(matchedTriggers, inputs);
@@ -516,6 +526,7 @@ async function executeAllTriggers(
         globalMaxFindings: inputs.maxFindings,
         globalRequestChanges: inputs.requestChanges,
         globalFailCheck: inputs.failCheck,
+        mcpServers: options.mcpServers,
         semaphore,
         abortController,
         circuitBreaker,
@@ -1645,6 +1656,7 @@ async function runAnalyzeMode(
     runnerConcurrency,
     matchedTriggers,
     skipCoreCheck,
+    mcpServers,
   } = initResult;
 
   if (skipCoreCheck || matchedTriggers.length === 0) {
@@ -1667,8 +1679,10 @@ async function runAnalyzeMode(
       name: 'execute triggers',
       attributes: { 'warden.trigger.count': matchedTriggers.length },
     },
-    () => executeAllTriggers(matchedTriggers, context, runnerConcurrency, inputs),
+    () => executeAllTriggers(matchedTriggers, context, runnerConcurrency, inputs, { mcpServers }),
   );
+
+  await defaultMcpConnectionManager.dispose();
 
   const reports = results.flatMap((result) => (result.report ? [result.report] : []));
   const outputs = computeWorkflowOutputs(reports);
@@ -1870,6 +1884,7 @@ export async function runPRWorkflow(
         matchedTriggers,
         skippedTriggers,
         skipCoreCheck,
+        mcpServers,
       } = initResult;
       span.setAttribute('warden.trigger.count', matchedTriggers.length);
 
@@ -1959,12 +1974,17 @@ export async function runPRWorkflow(
           },
           () => executeAllTriggers(matchedTriggers, context, runnerConcurrency, inputs, {
             checks: createTriggerCheckReporter(octokit, context),
+            mcpServers,
           }),
         );
       } catch (error) {
         await failUndispatchedSkillChecks(octokit, context, matchedTriggers, error);
         await failCoreCheck(octokit, context, coreCheckId, error);
         throw error;
+      } finally {
+        // Close any MCP connections opened during skill analysis before the
+        // review phase (which runs on the auxiliary lane only).
+        await defaultMcpConnectionManager.dispose();
       }
 
       const reviewPhase = await runOrFailCore(

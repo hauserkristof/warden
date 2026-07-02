@@ -232,6 +232,18 @@ function withoutBaseDuplicateSkills(
   return skipped.size > 0 ? { ...repo, skills } : repo;
 }
 
+/**
+ * Inherit the org base MCP servers into the repo layer, like custom providers:
+ * a repo layer that only adds skills should still reach the servers the org
+ * defined. A repo layer that declares its own `mcp` block replaces the base.
+ */
+function mergeMcpConfig(
+  base?: WardenConfig['mcp'],
+  overlay?: WardenConfig['mcp'],
+): WardenConfig['mcp'] {
+  return overlay ?? base;
+}
+
 export function mergeWardenConfigs(
   base: WardenConfig,
   overlay: WardenConfig,
@@ -244,6 +256,7 @@ export function mergeWardenConfigs(
     skills: [...base.skills, ...effectiveOverlay.skills],
     runner: mergeRunnerConfig(base.runner, effectiveOverlay.runner),
     logs: mergeLogsConfig(base.logs, effectiveOverlay.logs),
+    mcp: mergeMcpConfig(base.mcp, effectiveOverlay.mcp),
   };
 
   const result = WardenConfigSchema.safeParse(mergedConfig);

@@ -80,6 +80,7 @@ export default defineConfig({
                 { label: "Runner", link: "/config/runner" },
                 { label: "Scan Policy", link: "/config/scan" },
                 { label: "Chunking", link: "/config/chunking" },
+                { label: "MCP Servers", link: "/config/mcp" },
               ],
             },
             {

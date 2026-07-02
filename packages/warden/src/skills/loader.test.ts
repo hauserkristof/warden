@@ -294,6 +294,66 @@ describe('resolveSkillAsync with absolute and tilde paths', () => {
   });
 });
 
+describe('mcp frontmatter', () => {
+  it('parses a per-skill mcp opt-in map', async () => {
+    const tempDir = mkdtempSync(join(tmpdir(), 'warden-mcp-'));
+    const skillPath = join(tempDir, 'SKILL.md');
+    writeFileSync(
+      skillPath,
+      `---
+name: telemetry-review
+description: Reviews telemetry changes.
+mcp:
+  sentry:
+    - find_issue
+    - get_event
+  internal-docs: "*"
+---
+
+Prompt.
+`
+    );
+
+    try {
+      const skill = await loadSkillFromMarkdown(skillPath);
+      expect(skill.mcp).toEqual({
+        sentry: ['find_issue', 'get_event'],
+        'internal-docs': '*',
+      });
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it('drops malformed mcp frontmatter with a warning', async () => {
+    const tempDir = mkdtempSync(join(tmpdir(), 'warden-mcp-bad-'));
+    const skillPath = join(tempDir, 'SKILL.md');
+    writeFileSync(
+      skillPath,
+      `---
+name: bad-mcp
+description: Has malformed mcp.
+mcp:
+  sentry: find_issue
+---
+
+Prompt.
+`
+    );
+
+    const warnings: string[] = [];
+    try {
+      const skill = await loadSkillFromMarkdown(skillPath, {
+        onWarning: (m) => warnings.push(m),
+      });
+      expect(skill.mcp).toBeUndefined();
+      expect(warnings.some((w) => w.includes("malformed 'mcp'"))).toBe(true);
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+});
+
 describe('multi-line YAML scalar values', () => {
   it('parses multi-line description (block scalar style)', async () => {
     const tempDir = mkdtempSync(join(tmpdir(), 'warden-multiline-'));

@@ -17,6 +17,7 @@ import type { Span } from '@sentry/node';
 import type { Effort, ToolConfig } from '../../config/schema.js';
 import type { TraceRecorder } from '../../sentry-trace.js';
 import type { UsageStats } from '../../types/index.js';
+import type { RuntimeMcpOptions } from './mcp/index.js';
 
 export const RuntimeNameSchema = z.enum(['claude', 'pi']);
 export type RuntimeName = z.infer<typeof RuntimeNameSchema>;
@@ -57,6 +58,11 @@ export interface SkillRunRequest {
   traceRecorder?: TraceRecorder;
   /** Provider-specific settings consumed only by the selected runtime adapter. */
   providerOptions?: unknown;
+  /**
+   * Resolved MCP servers/tools this skill opted into. Consumed only by runtimes
+   * that support MCP (currently Pi); resolved at the runtime boundary.
+   */
+  mcp?: RuntimeMcpOptions;
 }
 
 export interface SkillRunResult {

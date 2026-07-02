@@ -2,7 +2,10 @@ import { claudeRuntime } from './claude.js';
 import { piRuntime } from './pi.js';
 import type { Runtime, RuntimeName } from './types.js';
 import { buildPiProviderOptions } from './custom-provider.js';
-import type { ProvidersConfig } from '../../config/schema.js';
+import { buildRuntimeMcpOptions, type RuntimeMcpOptions } from './mcp/index.js';
+
+export { defaultMcpConnectionManager, assertMcpConfigForRun } from './mcp/index.js';
+import type { McpServerConfig, ProvidersConfig, SkillMcpOptIn } from '../../config/schema.js';
 
 const RUNTIMES: Partial<Record<RuntimeName, Runtime>> = {
   claude: claudeRuntime,
@@ -60,4 +63,24 @@ export function getRuntimeProviderOptions(
   }
 
   return undefined;
+}
+
+export interface RuntimeMcpOptionsInput {
+  mcpServers?: McpServerConfig[];
+  skillMcp?: SkillMcpOptIn;
+}
+
+/**
+ * Build the per-skill MCP payload at the runtime boundary. Only the Pi runtime
+ * consumes MCP; other runtimes get `undefined`. Secrets resolve from the live
+ * process env, matching the run-start preflight (assertMcpConfigForRun).
+ */
+export function getRuntimeMcpOptions(
+  name: RuntimeName,
+  input: RuntimeMcpOptionsInput,
+): RuntimeMcpOptions | undefined {
+  if (name !== 'pi') {
+    return undefined;
+  }
+  return buildRuntimeMcpOptions(input.skillMcp, input.mcpServers, process.env);
 }

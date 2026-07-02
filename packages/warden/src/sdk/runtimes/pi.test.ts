@@ -169,6 +169,32 @@ describe('piRuntime.runSkill', () => {
     piMocks.registry.getAll.mockReturnValue([piMocks.model]);
   });
 
+  it('bridges opted-in MCP tools into the session customTools', async () => {
+    const fakeProvider = {
+      getServerTools: vi.fn(async () => [
+        { name: 'find_issue', description: 'Find an issue', inputSchema: { type: 'object' } },
+      ]),
+      callTool: vi.fn(async () => 'issue result'),
+    };
+
+    await piRuntime.runSkill({
+      ...baseSkillRequest(),
+      mcp: {
+        optIn: { sentry: ['find_issue'] },
+        resolvedServers: new Map([
+          ['sentry', { name: 'sentry', transport: 'stdio', command: 'noop', args: [], env: {} }],
+        ]),
+        provider: fakeProvider,
+      },
+    });
+
+    expect(fakeProvider.getServerTools).toHaveBeenCalled();
+    expect(createAgentSession).toHaveBeenCalledWith(expect.objectContaining({
+      tools: ['read', 'grep', 'find', 'ls', 'mcp__sentry__find_issue'],
+      customTools: [expect.objectContaining({ name: 'mcp__sentry__find_issue' })],
+    }));
+  });
+
   it('passes read-only Pi tools and normalizes the result', async () => {
     const result = await piRuntime.runSkill(baseSkillRequest());
 

@@ -11,6 +11,7 @@ import {
   type InvalidPiModelSelector,
 } from '../sdk/runtimes/model-selectors.js';
 import { assertCustomProviderAuthForRuntime } from '../sdk/runtimes/custom-provider.js';
+import { defaultMcpConnectionManager } from '../sdk/runtimes/index.js';
 import { resolveAuxiliaryLaneModel, resolveSynthesisLaneModel } from '../config/model-lanes.js';
 import { mapExtractionErrorCode } from '../sdk/errors.js';
 import { aggregateAuxiliaryUsageAttribution, mergeAuxiliaryUsage } from '../sdk/usage.js';
@@ -1227,6 +1228,7 @@ export async function runSkills(
       config?.defaults?.auxiliaryMaxRetries,
     verifyFindings: config?.defaults?.verification?.enabled !== false,
     captureTraces: options.traces,
+    mcpServers: config?.mcp?.servers,
   };
   const specs: RunSkillSpec[] = skillsToRun.map(({ skill, remote, filters, ...skillOptions }) => ({
     name: skill,
@@ -1299,6 +1301,10 @@ export async function runSkills(
   const results = reporter.mode.isTTY
     ? await runSkillTasksWithInk(tasks, taskOptions)
     : await runSkillTasks(tasks, taskOptions);
+
+  // Close any MCP connections opened during skill analysis. Safe no-op when no
+  // skill used MCP; fix evaluation below runs on the auxiliary lane only.
+  await defaultMcpConnectionManager.dispose();
 
   // Process results and output
   const totalDuration = Date.now() - startTime;
@@ -1579,6 +1585,7 @@ async function runConfigMode(options: CLIOptions, reporter: Reporter): Promise<n
       auxiliaryMaxRetries: trigger.auxiliaryMaxRetries,
       verifyFindings: trigger.verifyFindings,
       captureTraces: options.traces,
+      mcpServers: config.mcp?.servers,
     },
   }));
   const invalidModelSelector = findInvalidPiModelSelector(specs);
@@ -1648,6 +1655,9 @@ async function runConfigMode(options: CLIOptions, reporter: Reporter): Promise<n
   const results = reporter.mode.isTTY
     ? await runSkillTasksWithInk(tasks, taskOptions)
     : await runSkillTasks(tasks, taskOptions);
+
+  // Close any MCP connections opened during skill analysis (see runSkills).
+  await defaultMcpConnectionManager.dispose();
 
   // Process results and output
   const totalDuration = Date.now() - startTime;

@@ -8,6 +8,7 @@ import { verifyFindings } from './verify.js';
 vi.mock('./runtimes/index.js', () => ({
   getRuntime: vi.fn(),
   getRuntimeProviderOptions: vi.fn(() => undefined),
+  getRuntimeMcpOptions: vi.fn(() => undefined),
 }));
 
 vi.mock('./verify.js', () => ({

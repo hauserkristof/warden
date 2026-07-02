@@ -13,6 +13,7 @@ import { startTracedSpan } from '../sentry-trace.js';
 vi.mock('./runtimes/index.js', () => ({
   getRuntime: vi.fn(),
   getRuntimeProviderOptions: vi.fn(() => undefined),
+  getRuntimeMcpOptions: vi.fn(() => undefined),
 }));
 
 beforeAll(() => {

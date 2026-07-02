@@ -11,7 +11,8 @@ import { buildHunkSystemPrompt, buildHunkUserPrompt, type PRPromptContext } from
 import { extractFindingsJson, extractFindingsWithLLM, validateFindings } from './extract.js';
 import { postProcessFindings } from './post-process.js';
 import { buildFileReports } from './report-files.js';
-import { getRuntime, getRuntimeProviderOptions } from './runtimes/index.js';
+import { getRuntime, getRuntimeProviderOptions, getRuntimeMcpOptions } from './runtimes/index.js';
+import { assertMcpConfigForRun } from './runtimes/mcp/index.js';
 import type { SkillRunResult } from './runtimes/index.js';
 import {
   LARGE_PROMPT_THRESHOLD_CHARS,
@@ -398,6 +399,10 @@ async function analyzeHunk(
             providerOptions: getRuntimeProviderOptions(runtimeName, {
               pathToClaudeCodeExecutable: options.pathToClaudeCodeExecutable,
               providers: options.providers,
+            }),
+            mcp: getRuntimeMcpOptions(runtimeName, {
+              mcpServers: options.mcpServers,
+              skillMcp: skill.mcp,
             }),
           }));
 
@@ -929,6 +934,14 @@ export async function runSkill(
     },
     async (span) => {
       try {
+        // Fail fast before any hunk work when this skill's MCP opt-in references
+        // an undefined server or a server whose secrets are unset.
+        assertMcpConfigForRun({
+          runtime: options.runtime,
+          servers: options.mcpServers,
+          skills: [{ name: skill.name, mcp: skill.mcp }],
+          env: process.env,
+        });
         const report = await runSkillAnalysis(skill, context, options);
         span.setAttribute('warden.finding.count', report.findings.length);
         emitSkillMetrics(report);

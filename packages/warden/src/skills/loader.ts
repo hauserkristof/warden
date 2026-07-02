@@ -3,7 +3,7 @@ import { dirname, extname, join } from 'node:path';
 import { existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { loadSkillMd, SkillLoadError } from '@sentry/dotagents-lib';
-import type { SkillDefinition } from '../config/schema.js';
+import { SkillMcpOptInSchema, type SkillDefinition, type SkillMcpOptIn } from '../config/schema.js';
 import { isPathLike, resolvePathTarget } from '../utils/path.js';
 
 export class SkillLoaderError extends Error {
@@ -164,12 +164,36 @@ function extractBody(content: string): string {
 }
 
 /**
+ * Validate the optional `mcp:` frontmatter into a per-skill opt-in map.
+ *
+ * Malformed opt-ins are dropped with a warning rather than failing the whole
+ * skill load, matching the lenient handling of invalid `allowed-tools`. A skill
+ * that references an undefined server or tool is still caught later by the
+ * MCP run-start preflight.
+ */
+function parseSkillMcpOptIn(
+  raw: unknown,
+  filePath: string,
+  onWarning?: (message: string) => void,
+): SkillMcpOptIn | undefined {
+  if (raw === undefined) {
+    return undefined;
+  }
+  const parsed = SkillMcpOptInSchema.safeParse(raw);
+  if (!parsed.success) {
+    onWarning?.(`Ignoring malformed 'mcp' frontmatter in ${filePath}: ${parsed.error.message}`);
+    return undefined;
+  }
+  return parsed.data;
+}
+
+/**
  * Load a skill from a SKILL.md file (agentskills.io format).
  *
  * Frontmatter parsing and `allowed-tools` interpretation are delegated to
  * `@sentry/dotagents-lib`; this wrapper attaches warden-specific fields
- * (`prompt` body, `rootDir`, `tools.allowed`) and translates lib errors to
- * `SkillLoaderError` for callers that catch on warden's error type.
+ * (`prompt` body, `rootDir`, `tools.allowed`, `mcp`) and translates lib errors
+ * to `SkillLoaderError` for callers that catch on warden's error type.
  */
 export async function loadSkillFromMarkdown(
   filePath: string,
@@ -190,11 +214,14 @@ export async function loadSkillFromMarkdown(
   const content = await readFile(filePath, 'utf-8');
   const body = extractBody(content);
 
+  const mcp = parseSkillMcpOptIn(meta['mcp'], filePath, options?.onWarning);
+
   return {
     name: meta.name,
     description: meta.description,
     prompt: body.trim(),
     tools: meta.allowedTools !== undefined ? { allowed: meta.allowedTools } : undefined,
+    ...(mcp !== undefined ? { mcp } : {}),
     rootDir: dirname(filePath),
   };
 }

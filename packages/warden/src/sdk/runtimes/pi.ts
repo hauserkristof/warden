@@ -52,6 +52,7 @@ import {
 } from '../otel.js';
 import { aggregateUsage, emptyUsage } from '../usage.js';
 import type { PiProviderOptions } from './custom-provider.js';
+import { defaultMcpConnectionManager, toPiToolDefinitions } from './mcp/index.js';
 import { InvalidPiModelSelectorError, isPiModelSelector } from './model-selectors.js';
 import type {
   AuxiliaryRunRequest,
@@ -807,6 +808,13 @@ export const piRuntime: Runtime = {
         setGenAiInputMessagesAttr(span, [{ role: 'user', content: userPrompt }]);
 
         try {
+          const mcpTools = request.mcp
+            ? await toPiToolDefinitions({
+              optIn: request.mcp.optIn,
+              resolvedServers: request.mcp.resolvedServers,
+              provider: request.mcp.provider ?? defaultMcpConnectionManager,
+            })
+            : [];
           const run = await runPiPrompt({
             cwd: repoPath,
             systemPrompt,
@@ -815,7 +823,8 @@ export const piRuntime: Runtime = {
             model,
             legacyAnthropicApiKey: apiKey,
             customProviders: providerOptions as PiProviderOptions,
-            toolNames: skillTools.toolNames,
+            toolNames: [...skillTools.toolNames, ...mcpTools.map((tool) => tool.name)],
+            customTools: mcpTools.length > 0 ? mcpTools : undefined,
             maxTurns,
             effort,
             abortController,

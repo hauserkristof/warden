@@ -1,0 +1,122 @@
+---
+title: MCP Servers
+description: Give review skills access to Model Context Protocol tools.
+editUrl: false
+---
+
+Warden can hand its review skills extra tools through the Model Context Protocol
+(MCP). A skill analyzing a diff can reach out to a Sentry MCP, an internal-docs
+MCP, or a database-schema MCP to enrich its findings, without leaving the
+sandbox that keeps the rest of the run hermetic.
+
+MCP is a **Pi runtime** capability. Servers are declared once, globally, and
+each skill opts into exactly the servers and tools it needs. A skill sees nothing
+it did not ask for.
+
+## Declaring servers
+
+Servers live under a top-level `mcp` block. Like custom providers, they inherit
+from an org base config into repo layers.
+
+```toml title="warden.toml"
+# Local stdio server (a subprocess Warden spawns)
+[[mcp.servers]]
+name = "sentry"
+command = "npx"
+args = ["-y", "@sentry/mcp-server"]
+env = { SENTRY_TOKEN = "${SENTRY_TOKEN}" }
+
+# Remote Streamable HTTP / SSE server
+[[mcp.servers]]
+name = "internal-docs"
+url = "https://mcp.internal/sse"
+headers = { Authorization = "Bearer ${DOCS_TOKEN}" }
+```
+
+Transport is chosen by which field you set: `command` for a local stdio server,
+`url` for a remote HTTP one. Setting both is rejected.
+
+<dl class="sentry-key-value-list">
+  <div>
+    <dt>
+      <code>name</code>
+      <span class="sentry-property-meta">string</span>
+    </dt>
+    <dd>Unique server name. Used to scope skills and to name the tools it exposes (<code>mcp__&lt;name&gt;__&lt;tool&gt;</code>).</dd>
+  </div>
+  <div>
+    <dt>
+      <code>command</code>
+      <span class="sentry-property-meta">string · stdio</span>
+    </dt>
+    <dd>Executable to spawn for a local stdio server, e.g. <code>npx</code>.</dd>
+  </div>
+  <div>
+    <dt>
+      <code>args</code>
+      <span class="sentry-property-meta">string[] · stdio</span>
+    </dt>
+    <dd>Arguments passed to <code>command</code>.</dd>
+  </div>
+  <div>
+    <dt>
+      <code>env</code>
+      <span class="sentry-property-meta">table · stdio</span>
+    </dt>
+    <dd>Environment for the spawned process, merged over a safe default set. <code>${VAR}</code> values resolve from the host environment.</dd>
+  </div>
+  <div>
+    <dt>
+      <code>url</code>
+      <span class="sentry-property-meta">string · http</span>
+    </dt>
+    <dd>Endpoint of a remote Streamable HTTP / SSE server.</dd>
+  </div>
+  <div>
+    <dt>
+      <code>headers</code>
+      <span class="sentry-property-meta">table · http</span>
+    </dt>
+    <dd>Request headers. <code>${VAR}</code> values resolve from the host environment.</dd>
+  </div>
+</dl>
+
+Secrets are only ever read from the environment. Warden never writes a resolved
+`${VAR}` back into config or logs.
+
+## Opting a skill in
+
+A skill declares the servers and tools it wants in its `SKILL.md` frontmatter.
+Give an explicit tool allowlist, or `"*"` for every tool the server offers.
+
+```yaml title="SKILL.md"
+---
+name: telemetry-review
+description: Reviews telemetry-related changes.
+mcp:
+  sentry: [find_issue, get_event]
+  internal-docs: "*"
+---
+```
+
+The tools arrive in the agent named `mcp__sentry__find_issue`,
+`mcp__internal-docs__<tool>`, and so on.
+
+## What Warden checks before it runs
+
+Before any analysis begins, Warden fails fast when:
+
+- a skill opts into a server that is not defined;
+- a referenced server is missing a `${VAR}` secret;
+- a declared tool is not actually offered by the server.
+
+You never review with tools you thought you had but don't.
+
+## A word on trust
+
+Warden cannot police what an MCP server does once you connect to it. The trust
+boundary is explicit: whoever writes `warden.toml` and the skill frontmatter is
+trusted, the same way they are trusted to choose a model provider. Guardrails
+still apply. A skill only receives the tools it names, and MCP adds read tools
+for the agent. It does **not** widen Warden's ability to write to your
+repository. The `Write` / `Edit` / `Bash` gate is untouched.

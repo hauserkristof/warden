@@ -22,12 +22,59 @@ export const ToolConfigSchema = z.object({
 });
 export type ToolConfig = z.infer<typeof ToolConfigSchema>;
 
+// MCP server definitions (global). Transport is discriminated by the presence of
+// `command` (stdio) vs `url` (HTTP). `.strict()` rejects entries that mix both,
+// forcing exactly one transport shape and yielding a clear validation error.
+export const McpStdioServerSchema = z
+  .object({
+    name: z.string().min(1),
+    /** Executable to spawn for a local stdio MCP server (e.g. "npx"). */
+    command: z.string().min(1),
+    args: z.array(z.string()).optional(),
+    /** Environment for the spawned process. `${VAR}` values resolve from the host env. */
+    env: z.record(z.string().min(1), z.string()).optional(),
+  })
+  .strict();
+export type McpStdioServer = z.infer<typeof McpStdioServerSchema>;
+
+export const McpHttpServerSchema = z
+  .object({
+    name: z.string().min(1),
+    /** Endpoint of a remote Streamable HTTP / SSE MCP server. */
+    url: z.string().url(),
+    /** Request headers. `${VAR}` values resolve from the host env. */
+    headers: z.record(z.string().min(1), z.string()).optional(),
+  })
+  .strict();
+export type McpHttpServer = z.infer<typeof McpHttpServerSchema>;
+
+export const McpServerConfigSchema = z.union([McpStdioServerSchema, McpHttpServerSchema]);
+export type McpServerConfig = z.infer<typeof McpServerConfigSchema>;
+
+export const McpConfigSchema = z.object({
+  servers: z.array(McpServerConfigSchema).default([]),
+});
+export type McpConfig = z.infer<typeof McpConfigSchema>;
+
+/**
+ * Per-skill MCP opt-in, declared in SKILL.md frontmatter. Maps a global server
+ * name to either an explicit tool allowlist or "*" for all of the server's
+ * tools. A skill only ever sees the servers/tools it names (least privilege).
+ */
+export const SkillMcpOptInSchema = z.record(
+  z.string().min(1),
+  z.union([z.literal('*'), z.array(z.string().min(1))]),
+);
+export type SkillMcpOptIn = z.infer<typeof SkillMcpOptInSchema>;
+
 // Skill definition
 export const SkillDefinitionSchema = z.object({
   name: z.string().min(1),
   description: z.string(),
   prompt: z.string(),
   tools: ToolConfigSchema.optional(),
+  /** MCP servers/tools this skill opts into, parsed from `mcp:` frontmatter. */
+  mcp: SkillMcpOptInSchema.optional(),
   /** Directory where the skill was loaded from, for resolving resources (scripts/, references/, assets/) */
   rootDir: z.string().optional(),
 });
@@ -335,6 +382,8 @@ export const WardenConfigSchema = z
     skills: z.array(SkillConfigSchema).default([]),
     runner: RunnerConfigSchema.optional(),
     logs: LogsConfigSchema.optional(),
+    /** Global MCP servers available to skills that opt in via `mcp:` frontmatter. */
+    mcp: McpConfigSchema.optional(),
   })
   .superRefine((config, ctx) => {
     const names = config.skills.map((s) => s.name);
@@ -344,6 +393,16 @@ export const WardenConfigSchema = z
         code: z.ZodIssueCode.custom,
         message: `Duplicate skill names: ${[...new Set(duplicates)].join(', ')}`,
         path: ['skills'],
+      });
+    }
+
+    const serverNames = (config.mcp?.servers ?? []).map((s) => s.name);
+    const duplicateServers = serverNames.filter((name, i) => serverNames.indexOf(name) !== i);
+    if (duplicateServers.length > 0) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: `Duplicate MCP server names: ${[...new Set(duplicateServers)].join(', ')}`,
+        path: ['mcp', 'servers'],
       });
     }
 
