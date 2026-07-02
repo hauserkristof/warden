@@ -74,6 +74,7 @@ export interface TriggerResult {
     minConfidence?: ConfidenceThreshold;
     reportOnSuccess?: boolean;
     requestChanges?: boolean;
+    suggestions?: boolean;
     failCheck?: boolean;
     checkRunUrl?: string;
     maxFindings?: number;

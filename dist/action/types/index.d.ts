@@ -123,6 +123,7 @@ export declare const FindingSchema: z.ZodObject<{
             highlighted: z.ZodOptional<z.ZodBoolean>;
         }, z.core.$strip>>;
     }, z.core.$strip>>;
+    suggestion: z.ZodOptional<z.ZodString>;
     elapsedMs: z.ZodOptional<z.ZodNumber>;
 }, z.core.$strip>;
 export type Finding = z.infer<typeof FindingSchema>;
@@ -369,6 +370,7 @@ export declare const SkillReportSchema: z.ZodObject<{
                 highlighted: z.ZodOptional<z.ZodBoolean>;
             }, z.core.$strip>>;
         }, z.core.$strip>>;
+        suggestion: z.ZodOptional<z.ZodString>;
         elapsedMs: z.ZodOptional<z.ZodNumber>;
     }, z.core.$strip>>;
     metadata: z.ZodOptional<z.ZodRecord<z.ZodString, z.ZodUnknown>>;

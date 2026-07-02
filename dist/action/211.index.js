@@ -1876,6 +1876,7 @@ async function postTriggerReview(ctx, deps) {
                     minConfidence: result.minConfidence,
                     failOn: result.failOn,
                     requestChanges: result.requestChanges,
+                    suggestions: result.suggestions,
                     checkRunUrl: result.checkRunUrl,
                     totalFindings: result.report.findings.length,
                     // Pass original findings for failOn evaluation (not affected by dedup)
@@ -2139,6 +2140,7 @@ async function executeTrigger(trigger, deps) {
         const reportOn = trigger.reportOn ?? deps.globalReportOn;
         const minConfidence = trigger.minConfidence ?? 'medium';
         const requestChanges = trigger.requestChanges ?? deps.globalRequestChanges;
+        const suggestions = trigger.suggestions ?? false;
         const failCheck = trigger.failCheck ?? deps.globalFailCheck;
         const skillRoot = trigger.useBuiltinSkill ? undefined : (trigger.skillRoot ?? context.repoPath);
         try {
@@ -2213,6 +2215,7 @@ async function executeTrigger(trigger, deps) {
                     minConfidence,
                     failOn,
                     requestChanges,
+                    suggestions,
                     checkRunUrl: skillCheckUrl,
                     totalFindings: report.findings.length,
                 })
@@ -2229,6 +2232,7 @@ async function executeTrigger(trigger, deps) {
                 minConfidence,
                 reportOnSuccess: trigger.reportOnSuccess,
                 requestChanges,
+                suggestions,
                 failCheck,
                 checkRunUrl: skillCheckUrl,
                 maxFindings,
@@ -3561,6 +3565,7 @@ function buildReportModeResults(output, matchedTriggers, inputs) {
         const reportOn = trigger.reportOn ?? inputs.reportOn;
         const minConfidence = trigger.minConfidence ?? 'medium';
         const requestChanges = trigger.requestChanges ?? inputs.requestChanges;
+        const suggestions = trigger.suggestions ?? false;
         const failCheck = trigger.failCheck ?? inputs.failCheck;
         const maxFindings = trigger.maxFindings ?? inputs.maxFindings;
         const baseResult = {
@@ -3572,6 +3577,7 @@ function buildReportModeResults(output, matchedTriggers, inputs) {
             minConfidence,
             reportOnSuccess: trigger.reportOnSuccess,
             requestChanges,
+            suggestions,
             failCheck,
             maxFindings,
         };
@@ -3616,6 +3622,7 @@ function withRenderedReviewResult(result) {
                 minConfidence: result.minConfidence,
                 failOn: result.failOn,
                 requestChanges: result.requestChanges,
+                suggestions: result.suggestions,
                 checkRunUrl: result.checkRunUrl,
                 totalFindings: result.report.findings.length,
             })
@@ -8613,6 +8620,7 @@ function triggerIdentity(skill, trigger) {
         maxFindings: trigger?.maxFindings ?? skill.maxFindings,
         reportOnSuccess: trigger?.reportOnSuccess ?? skill.reportOnSuccess,
         requestChanges: trigger?.requestChanges ?? skill.requestChanges,
+        suggestions: trigger?.suggestions ?? skill.suggestions,
         failCheck: trigger?.failCheck ?? skill.failCheck,
         model: trigger?.model ?? skill.model,
         maxTurns: trigger?.maxTurns ?? skill.maxTurns,
@@ -8706,6 +8714,7 @@ function resolveSkillConfigs(config, cliModel, skillRootsByName) {
                 maxFindings: skill.maxFindings ?? defaults?.maxFindings,
                 reportOnSuccess: skill.reportOnSuccess ?? defaults?.reportOnSuccess,
                 requestChanges: skill.requestChanges ?? defaults?.requestChanges,
+                suggestions: skill.suggestions ?? defaults?.suggestions,
                 failCheck: skill.failCheck ?? defaults?.failCheck,
                 model: baseModel,
                 maxTurns: baseMaxTurns,
@@ -8743,6 +8752,7 @@ function resolveSkillConfigs(config, cliModel, skillRootsByName) {
                     maxFindings: trigger.maxFindings ?? skill.maxFindings ?? defaults?.maxFindings,
                     reportOnSuccess: trigger.reportOnSuccess ?? skill.reportOnSuccess ?? defaults?.reportOnSuccess,
                     requestChanges: trigger.requestChanges ?? skill.requestChanges ?? defaults?.requestChanges,
+                    suggestions: trigger.suggestions ?? skill.suggestions ?? defaults?.suggestions,
                     failCheck: trigger.failCheck ?? skill.failCheck ?? defaults?.failCheck,
                     model: (0,_utils_index_js__WEBPACK_IMPORTED_MODULE_6__/* .emptyToUndefined */ .Zu)(trigger.model) ?? baseModel,
                     maxTurns: trigger.maxTurns ?? baseMaxTurns,
@@ -8855,7 +8865,7 @@ __webpack_require__.d(__webpack_exports__, {
   Tx: () => (/* binding */ WardenConfigSchema)
 });
 
-// UNUSED EXPORTS: AgentRuntimeConfigSchema, AuxiliaryRuntimeConfigSchema, ChunkingConfigSchema, CoalesceConfigSchema, DefaultsSchema, EffortSchema, FilePatternSchema, IgnoreConfigSchema, LogCleanupModeSchema, LogsConfigSchema, ProviderConfigSchema, ProviderModelConfigSchema, ProvidersConfigSchema, RunnerConfigSchema, RuntimeNameSchema, ScanConfigSchema, ScheduleConfigSchema, SkillConfigSchema, SkillDefinitionSchema, SkillTriggerSchema, SynthesisRuntimeConfigSchema, ToolConfigSchema, ToolNameSchema, TriggerTypeSchema, VerificationConfigSchema
+// UNUSED EXPORTS: AgentRuntimeConfigSchema, AuxiliaryRuntimeConfigSchema, ChunkingConfigSchema, CoalesceConfigSchema, DefaultsSchema, EffortSchema, FilePatternSchema, IgnoreConfigSchema, LogCleanupModeSchema, LogsConfigSchema, McpConfigSchema, McpHttpServerSchema, McpServerConfigSchema, McpStdioServerSchema, ProviderConfigSchema, ProviderModelConfigSchema, ProvidersConfigSchema, RunnerConfigSchema, RuntimeNameSchema, ScanConfigSchema, ScheduleConfigSchema, SkillConfigSchema, SkillDefinitionSchema, SkillMcpOptInSchema, SkillTriggerSchema, SynthesisRuntimeConfigSchema, ToolConfigSchema, ToolNameSchema, TriggerTypeSchema, VerificationConfigSchema
 
 // EXTERNAL MODULE: ../../node_modules/.pnpm/zod@4.4.3/node_modules/zod/v4/classic/schemas.js + 2 modules
 var schemas = __webpack_require__(53391);
@@ -8901,12 +8911,44 @@ const ToolConfigSchema = schemas/* object */.Ik({
     allowed: schemas/* array */.YO(ToolNameSchema).optional(),
     denied: schemas/* array */.YO(ToolNameSchema).optional(),
 });
+// MCP server definitions (global). Transport is discriminated by the presence of
+// `command` (stdio) vs `url` (HTTP). `.strict()` rejects entries that mix both,
+// forcing exactly one transport shape and yielding a clear validation error.
+const McpStdioServerSchema = schemas/* object */.Ik({
+    name: schemas/* string */.Yj().min(1),
+    /** Executable to spawn for a local stdio MCP server (e.g. "npx"). */
+    command: schemas/* string */.Yj().min(1),
+    args: schemas/* array */.YO(schemas/* string */.Yj()).optional(),
+    /** Environment for the spawned process. `${VAR}` values resolve from the host env. */
+    env: schemas/* record */.g1(schemas/* string */.Yj().min(1), schemas/* string */.Yj()).optional(),
+})
+    .strict();
+const McpHttpServerSchema = schemas/* object */.Ik({
+    name: schemas/* string */.Yj().min(1),
+    /** Endpoint of a remote Streamable HTTP / SSE MCP server. */
+    url: schemas/* string */.Yj().url(),
+    /** Request headers. `${VAR}` values resolve from the host env. */
+    headers: schemas/* record */.g1(schemas/* string */.Yj().min(1), schemas/* string */.Yj()).optional(),
+})
+    .strict();
+const McpServerConfigSchema = schemas/* union */.KC([McpStdioServerSchema, McpHttpServerSchema]);
+const McpConfigSchema = schemas/* object */.Ik({
+    servers: schemas/* array */.YO(McpServerConfigSchema).default([]),
+});
+/**
+ * Per-skill MCP opt-in, declared in SKILL.md frontmatter. Maps a global server
+ * name to either an explicit tool allowlist or "*" for all of the server's
+ * tools. A skill only ever sees the servers/tools it names (least privilege).
+ */
+const SkillMcpOptInSchema = schemas/* record */.g1(schemas/* string */.Yj().min(1), schemas/* union */.KC([schemas/* literal */.eu('*'), schemas/* array */.YO(schemas/* string */.Yj().min(1))]));
 // Skill definition
 const SkillDefinitionSchema = schemas/* object */.Ik({
     name: schemas/* string */.Yj().min(1),
     description: schemas/* string */.Yj(),
     prompt: schemas/* string */.Yj(),
     tools: ToolConfigSchema.optional(),
+    /** MCP servers/tools this skill opts into, parsed from `mcp:` frontmatter. */
+    mcp: SkillMcpOptInSchema.optional(),
     /** Directory where the skill was loaded from, for resolving resources (scripts/, references/, assets/) */
     rootDir: schemas/* string */.Yj().optional(),
 });
@@ -8958,6 +9000,8 @@ const SkillTriggerSchema = schemas/* object */.Ik({
     reportOnSuccess: schemas/* boolean */.zM().optional(),
     /** Use REQUEST_CHANGES review event when findings exceed failOn */
     requestChanges: schemas/* boolean */.zM().optional(),
+    /** Render committable ```suggestion blocks for findings that carry a fix. Default: false */
+    suggestions: schemas/* boolean */.zM().optional(),
     /** Fail the check run when findings exceed failOn */
     failCheck: schemas/* boolean */.zM().optional(),
     model: schemas/* string */.Yj().optional(),
@@ -8998,6 +9042,8 @@ const SkillConfigSchema = schemas/* object */.Ik({
     reportOnSuccess: schemas/* boolean */.zM().optional(),
     /** Use REQUEST_CHANGES review event when findings exceed failOn */
     requestChanges: schemas/* boolean */.zM().optional(),
+    /** Render committable ```suggestion blocks for findings that carry a fix. Default: false */
+    suggestions: schemas/* boolean */.zM().optional(),
     /** Fail the check run when findings exceed failOn */
     failCheck: schemas/* boolean */.zM().optional(),
     /** Model to use for this skill (e.g., 'openai/gpt-5.5'). Uses SDK default if not specified. */
@@ -9108,6 +9154,8 @@ const DefaultsSchema = schemas/* object */.Ik({
     reportOnSuccess: schemas/* boolean */.zM().optional(),
     /** Use REQUEST_CHANGES review event when findings exceed failOn. Default: false */
     requestChanges: schemas/* boolean */.zM().optional(),
+    /** Render committable ```suggestion blocks for findings that carry a fix. Default: false */
+    suggestions: schemas/* boolean */.zM().optional(),
     /** Fail the check run when findings exceed failOn. Default: false */
     failCheck: schemas/* boolean */.zM().optional(),
     /** Default model for all skills (e.g., 'openai/gpt-5.5') */
@@ -9159,6 +9207,8 @@ const WardenConfigSchema = schemas/* object */.Ik({
     skills: schemas/* array */.YO(SkillConfigSchema).default([]),
     runner: RunnerConfigSchema.optional(),
     logs: LogsConfigSchema.optional(),
+    /** Global MCP servers available to skills that opt in via `mcp:` frontmatter. */
+    mcp: McpConfigSchema.optional(),
 })
     .superRefine((config, ctx) => {
     const names = config.skills.map((s) => s.name);
@@ -9168,6 +9218,15 @@ const WardenConfigSchema = schemas/* object */.Ik({
             code: compat/* ZodIssueCode */.eq.custom,
             message: `Duplicate skill names: ${[...new Set(duplicates)].join(', ')}`,
             path: ['skills'],
+        });
+    }
+    const serverNames = (config.mcp?.servers ?? []).map((s) => s.name);
+    const duplicateServers = serverNames.filter((name, i) => serverNames.indexOf(name) !== i);
+    if (duplicateServers.length > 0) {
+        ctx.addIssue({
+            code: compat/* ZodIssueCode */.eq.custom,
+            message: `Duplicate MCP server names: ${[...new Set(duplicateServers)].join(', ')}`,
+            path: ['mcp', 'servers'],
         });
     }
     // Validate schedule skills have paths
@@ -11040,7 +11099,7 @@ async function findExistingIssue(octokit, owner, repo, title) {
 
 
 function renderSkillReport(report, options = {}) {
-    const { maxFindings, groupByFile = true, reportOn, minConfidence, failOn, requestChanges, checkRunUrl, totalFindings, allFindings } = options;
+    const { maxFindings, groupByFile = true, reportOn, minConfidence, failOn, requestChanges, suggestions, checkRunUrl, totalFindings, allFindings } = options;
     // Filter by reportOn threshold and confidence, then apply maxFindings limit
     const filteredFindings = (0,_types_index_js__WEBPACK_IMPORTED_MODULE_0__/* .filterFindings */ .Ni)(report.findings, reportOn, minConfidence);
     const findings = maxFindings ? filteredFindings.slice(0, maxFindings) : filteredFindings;
@@ -11051,11 +11110,21 @@ function renderSkillReport(report, options = {}) {
     // Use allFindings for failOn evaluation if provided (e.g., when report.findings was modified for dedup)
     // Apply confidence filtering to failOn evaluation too
     const findingsForFailOn = (0,_types_index_js__WEBPACK_IMPORTED_MODULE_0__/* .filterFindings */ .Ni)(allFindings ?? report.findings, undefined, minConfidence);
-    const review = renderReview(sortedFindings, report, failOn, findingsForFailOn, requestChanges);
+    const review = renderReview(sortedFindings, report, failOn, findingsForFailOn, requestChanges, suggestions);
     const summaryComment = renderSummaryComment(report, sortedFindings, groupByFile, checkRunUrl, hiddenCount);
     return { review, summaryComment };
 }
-function renderReview(findings, report, failOn, allFindings, requestChanges) {
+/**
+ * Severity flair prepended to each inline review comment so severity is
+ * scannable in the PR timeline. Always rendered, independent of the
+ * suggestions flag.
+ */
+const SEVERITY_FLAIR = {
+    high: '🔴 **HIGH**',
+    medium: '🟠 **MEDIUM**',
+    low: '🟡 **LOW**',
+};
+function renderReview(findings, report, failOn, allFindings, requestChanges, suggestions) {
     const findingsWithLocation = findings.filter((f) => f.location);
     const findingsWithoutLocation = findings.filter((f) => !f.location);
     // Determine review event type based on failOn threshold against ALL findings.
@@ -11085,9 +11154,15 @@ function renderReview(findings, report, failOn, allFindings, requestChanges) {
         if (!location) {
             throw new Error('Unexpected: finding without location in filtered list');
         }
-        let body = `**${(0,_utils_index_js__WEBPACK_IMPORTED_MODULE_3__/* .escapeHtml */ .ZD)(finding.title)}**\n\n${(0,_utils_index_js__WEBPACK_IMPORTED_MODULE_3__/* .escapeHtml */ .ZD)(finding.description)}`;
+        let body = `${SEVERITY_FLAIR[finding.severity]} · **${(0,_utils_index_js__WEBPACK_IMPORTED_MODULE_3__/* .escapeHtml */ .ZD)(finding.title)}**\n\n${(0,_utils_index_js__WEBPACK_IMPORTED_MODULE_3__/* .escapeHtml */ .ZD)(finding.description)}`;
         if (finding.verification?.trim()) {
             body += `\n\n${renderVerification(finding.verification)}`;
+        }
+        // Committable suggestion. Replaces exactly the anchored line range
+        // (startLine..endLine). Content is emitted verbatim, never escaped, so
+        // GitHub can commit it. Placed before the machine markers below.
+        if (suggestions && finding.suggestion !== undefined) {
+            body += `\n\n\`\`\`suggestion\n${finding.suggestion}\n\`\`\``;
         }
         // Additional locations section
         if (finding.additionalLocations?.length) {
@@ -13553,7 +13628,8 @@ Full schema:
         "startLine": 10,
         "endLine": 15
       },
-      "verification": "Required. Evidence for the public Evidence block. Write 2-5 short Markdown bullets tracing the concrete code path, guard, condition, or behavior that makes the finding real. Use function/file names when useful. Do not use checklist labels, generic reasoning, or restate the description."
+      "verification": "Required. Evidence for the public Evidence block. Write 2-5 short Markdown bullets tracing the concrete code path, guard, condition, or behavior that makes the finding real. Use function/file names when useful. Do not use checklist labels, generic reasoning, or restate the description.",
+      "suggestion": "Optional. A concrete, committable fix. The FULL replacement text for exactly the lines in 'location' (startLine..endLine) - new code only, no diff markers, no surrounding unchanged lines."
     }
   ]
 }
@@ -13562,6 +13638,7 @@ Requirements:
 - Return valid JSON starting with {"findings":
 - "findings" array can be empty if no issues found
 - "location.path" is auto-filled from context - just provide startLine (and optionally endLine). Omit location entirely for general findings not about a specific line.
+- "suggestion" is optional. Include it ONLY when you have a concrete, complete fix. It must be the exact replacement for every line in "location" (set "location.endLine" to cover the full span you are rewriting). Emit new code only - no leading '+'/'-', no unchanged context lines. Omit "suggestion" for advisory findings or when the fix touches code outside the range.
 - "location.startLine" MUST be within the hunk line range (shown in the "## Hunk" header). If the issue originates in surrounding code, anchor to the nearest changed line in the hunk and note the actual location in the description.
 - "confidence" reflects how certain you are this is a real issue given the codebase context
 - "description" is rendered directly in GitHub inline comments. Keep it brief and actionable, usually one sentence.

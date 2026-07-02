@@ -67,6 +67,8 @@ export interface ResolvedTrigger {
     reportOnSuccess?: boolean;
     /** Use REQUEST_CHANGES review event when findings exceed failOn */
     requestChanges?: boolean;
+    /** Render committable ```suggestion blocks for findings that carry a fix */
+    suggestions?: boolean;
     /** Fail the check run when findings exceed failOn */
     failCheck?: boolean;
     /** Model (merged: trigger > skill > defaults > cli > env) */

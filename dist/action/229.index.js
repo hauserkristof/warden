@@ -2689,6 +2689,12 @@ const FindingSchema = zod__WEBPACK_IMPORTED_MODULE_0__/* .object */ .Ik({
     location: LocationSchema.optional(),
     additionalLocations: zod__WEBPACK_IMPORTED_MODULE_0__/* .array */ .YO(LocationSchema).optional(),
     sourceSnippet: SourceSnippetSchema.optional(),
+    /**
+     * Full replacement text for exactly the lines in `location`
+     * (startLine..endLine). When present and enabled, rendered as a committable
+     * GitHub ```suggestion block. Requires `location`.
+     */
+    suggestion: zod__WEBPACK_IMPORTED_MODULE_0__/* .string */ .Yj().optional(),
     elapsedMs: zod__WEBPACK_IMPORTED_MODULE_0__/* .number */ .ai().nonnegative().optional(),
 });
 /**
