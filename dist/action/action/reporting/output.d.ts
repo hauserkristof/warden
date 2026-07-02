@@ -47,6 +47,7 @@ export declare const TriggerRunResultSchema: z.ZodDiscriminatedUnion<[z.ZodObjec
                     highlighted: z.ZodOptional<z.ZodBoolean>;
                 }, z.core.$strip>>;
             }, z.core.$strip>>;
+            suggestion: z.ZodOptional<z.ZodString>;
             elapsedMs: z.ZodOptional<z.ZodNumber>;
         }, z.core.$strip>>;
         durationMs: z.ZodOptional<z.ZodNumber>;
@@ -218,6 +219,7 @@ export declare const FindingsOutputSchema: z.ZodObject<{
                         highlighted: z.ZodOptional<z.ZodBoolean>;
                     }, z.core.$strip>>;
                 }, z.core.$strip>>;
+                suggestion: z.ZodOptional<z.ZodString>;
                 elapsedMs: z.ZodOptional<z.ZodNumber>;
             }, z.core.$strip>>;
             durationMs: z.ZodOptional<z.ZodNumber>;
@@ -295,6 +297,7 @@ export declare const FindingsOutputSchema: z.ZodObject<{
                     highlighted: z.ZodOptional<z.ZodBoolean>;
                 }, z.core.$strip>>;
             }, z.core.$strip>>;
+            suggestion: z.ZodOptional<z.ZodString>;
             elapsedMs: z.ZodOptional<z.ZodNumber>;
         }, z.core.$strip>;
         skill: z.ZodOptional<z.ZodString>;
@@ -338,6 +341,7 @@ export declare const FindingsOutputSchema: z.ZodObject<{
                     highlighted: z.ZodOptional<z.ZodBoolean>;
                 }, z.core.$strip>>;
             }, z.core.$strip>>;
+            suggestion: z.ZodOptional<z.ZodString>;
             elapsedMs: z.ZodOptional<z.ZodNumber>;
         }, z.core.$strip>;
         skill: z.ZodOptional<z.ZodString>;
@@ -396,6 +400,7 @@ export declare const FindingsOutputSchema: z.ZodObject<{
                     highlighted: z.ZodOptional<z.ZodBoolean>;
                 }, z.core.$strip>>;
             }, z.core.$strip>>;
+            suggestion: z.ZodOptional<z.ZodString>;
             elapsedMs: z.ZodOptional<z.ZodNumber>;
         }, z.core.$strip>;
         skill: z.ZodOptional<z.ZodString>;
@@ -443,6 +448,7 @@ export declare const FindingsOutputSchema: z.ZodObject<{
                     highlighted: z.ZodOptional<z.ZodBoolean>;
                 }, z.core.$strip>>;
             }, z.core.$strip>>;
+            suggestion: z.ZodOptional<z.ZodString>;
             elapsedMs: z.ZodOptional<z.ZodNumber>;
         }, z.core.$strip>;
         skill: z.ZodOptional<z.ZodString>;
@@ -490,6 +496,7 @@ export declare const FindingsOutputSchema: z.ZodObject<{
                     highlighted: z.ZodOptional<z.ZodBoolean>;
                 }, z.core.$strip>>;
             }, z.core.$strip>>;
+            suggestion: z.ZodOptional<z.ZodString>;
             elapsedMs: z.ZodOptional<z.ZodNumber>;
         }, z.core.$strip>;
         skill: z.ZodOptional<z.ZodString>;

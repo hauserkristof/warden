@@ -1,4 +1,4 @@
-import type { SkillDefinition } from '../config/schema.js';
+import { type SkillDefinition } from '../config/schema.js';
 export declare class SkillLoaderError extends Error {
     constructor(message: string, options?: {
         cause?: unknown;
@@ -76,8 +76,8 @@ export interface LoadSkillFromMarkdownOptions {
  *
  * Frontmatter parsing and `allowed-tools` interpretation are delegated to
  * `@sentry/dotagents-lib`; this wrapper attaches warden-specific fields
- * (`prompt` body, `rootDir`, `tools.allowed`) and translates lib errors to
- * `SkillLoaderError` for callers that catch on warden's error type.
+ * (`prompt` body, `rootDir`, `tools.allowed`, `mcp`) and translates lib errors
+ * to `SkillLoaderError` for callers that catch on warden's error type.
  */
 export declare function loadSkillFromMarkdown(filePath: string, options?: LoadSkillFromMarkdownOptions): Promise<SkillDefinition>;
 /**

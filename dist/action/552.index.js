@@ -1351,7 +1351,7 @@ function loadGoogleVertexProviderModule() {
     return googleVertexProviderModulePromise;
 }
 function loadMistralProviderModule() {
-    mistralProviderModulePromise ||= Promise.all(/* import() */[__webpack_require__.e(578), __webpack_require__.e(539)]).then(__webpack_require__.bind(__webpack_require__, 73539)).then((module) => {
+    mistralProviderModulePromise ||= Promise.all(/* import() */[__webpack_require__.e(379), __webpack_require__.e(98)]).then(__webpack_require__.bind(__webpack_require__, 54098)).then((module) => {
         const provider = module;
         return {
             stream: provider.streamMistral,
