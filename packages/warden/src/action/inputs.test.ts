@@ -66,6 +66,23 @@ describe('parseActionInputs', () => {
       expect(inputs.requestChanges).toBeUndefined();
     });
 
+    it('parses dedup-external as true', () => {
+      process.env['INPUT_DEDUP_EXTERNAL'] = 'true';
+      const inputs = parseActionInputs();
+      expect(inputs.dedupExternal).toBe(true);
+    });
+
+    it('parses dedup-external as false', () => {
+      process.env['INPUT_DEDUP_EXTERNAL'] = 'false';
+      const inputs = parseActionInputs();
+      expect(inputs.dedupExternal).toBe(false);
+    });
+
+    it('leaves dedupExternal undefined when not set', () => {
+      const inputs = parseActionInputs();
+      expect(inputs.dedupExternal).toBeUndefined();
+    });
+
     it('parses fail-check as true', () => {
       process.env['INPUT_FAIL_CHECK'] = 'true';
       const inputs = parseActionInputs();

@@ -1201,6 +1201,84 @@ describe('runPRWorkflow', () => {
       expect(createReview).not.toHaveBeenCalled();
     });
 
+    it('deduplicates against external comments by default', async () => {
+      const finding = createFinding();
+      const report = createSkillReport({ findings: [finding] });
+      const externalComment = {
+        id: 99,
+        body: 'Same issue spotted by another bot',
+        path: 'src/test.ts',
+        line: 10,
+        isWarden: false,
+        title: 'Test Finding',
+        description: 'This is a test finding',
+        contentHash: 'abc123',
+      };
+
+      mockFetchExistingComments.mockResolvedValue([externalComment]);
+      // Dedup treats the finding as a duplicate of the external comment
+      mockDeduplicateFindings.mockResolvedValue({
+        newFindings: [],
+        duplicateActions: [
+          {
+            type: 'react_external',
+            originalFindingId: finding.id,
+            finding,
+            existingComment: externalComment,
+            matchType: 'hash',
+          },
+        ],
+      });
+      mockRunSkillTask.mockResolvedValue({ name: 'test-trigger', report });
+
+      await runPRWorkflow(mockOctokit, createDefaultInputs(), 'pull_request', EVENT_PAYLOAD_PATH, FIXTURES_DIR);
+
+      // External comment is part of the dedup set, so the finding is suppressed
+      expect(mockDeduplicateFindings).toHaveBeenCalledWith(
+        [finding],
+        expect.arrayContaining([expect.objectContaining({ id: 99, isWarden: false })]),
+        expect.anything()
+      );
+      expect(vi.mocked(mockOctokit.pulls.createReview)).not.toHaveBeenCalled();
+    });
+
+    it('posts findings despite a matching external comment when dedup-external is false', async () => {
+      const finding = createFinding();
+      const report = createSkillReport({ findings: [finding] });
+      const externalComment = {
+        id: 99,
+        body: 'Same issue spotted by another bot',
+        path: 'src/test.ts',
+        line: 10,
+        isWarden: false,
+        title: 'Test Finding',
+        description: 'This is a test finding',
+        contentHash: 'abc123',
+      };
+
+      mockFetchExistingComments.mockResolvedValue([externalComment]);
+      mockRunSkillTask.mockResolvedValue({ name: 'test-trigger', report });
+
+      await runPRWorkflow(
+        mockOctokit,
+        createDefaultInputs({ dedupExternal: false }),
+        'pull_request',
+        EVENT_PAYLOAD_PATH,
+        FIXTURES_DIR
+      );
+
+      // External comment is filtered out of the dedup set, leaving it empty, so
+      // dedup is skipped entirely and Warden posts its own comment.
+      expect(mockDeduplicateFindings).not.toHaveBeenCalled();
+      expect(vi.mocked(mockOctokit.pulls.createReview)).toHaveBeenCalledWith(
+        expect.objectContaining({
+          comments: expect.arrayContaining([
+            expect.objectContaining({ path: 'src/test.ts', line: 10 }),
+          ]),
+        })
+      );
+    });
+
     it('normalizes empty auxiliary default before review deduplication', async () => {
       const finding = createFinding();
       const report = createSkillReport({ findings: [finding] });
