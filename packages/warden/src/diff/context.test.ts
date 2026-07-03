@@ -202,6 +202,67 @@ describe('formatHunkForAnalysis', () => {
     expect(output).toContain('### Changes');
   });
 
+  it('prefixes changed lines with their absolute new-file line number', () => {
+    const hunkCtx = {
+      filename: 'src/index.ts',
+      hunk: {
+        oldStart: 10,
+        oldCount: 2,
+        newStart: 10,
+        newCount: 3,
+        content: '@@ -10,2 +10,3 @@\n const x = 1;\n+const y = 2;\n return x;',
+        lines: [' const x = 1;', '+const y = 2;', ' return x;'],
+      },
+      contextBefore: [],
+      contextAfter: [],
+      contextStartLine: 10,
+      language: 'typescript',
+    };
+
+    const output = formatHunkForAnalysis(hunkCtx);
+
+    // The added line lives at absolute line 11 and must be labelled as such.
+    expect(output).toMatch(/^\s*11 \+const y = 2;$/m);
+    expect(output).toMatch(/^\s*10 {2}const x = 1;$/m);
+  });
+
+  // Regression for the inline-comment line-drift bug: on a coalesced hunk the
+  // prompt must show the TRUE absolute line for lines past the dropped gap.
+  it('labels lines past a coalesced gap with their true absolute number', () => {
+    const hunkCtx = {
+      filename: 'reconciliation.service.ts',
+      hunk: {
+        // Coalesced hunk spanning 42..79 with the 54..77 gap dropped from lines.
+        oldStart: 40,
+        oldCount: 12,
+        newStart: 42,
+        newCount: 38,
+        header: 'async reconcile() { → async finish() {',
+        content: [
+          '@@ -40,2 +42,2 @@ async reconcile() {',
+          '+const dry = process.env.DRY_RUN;',
+          ' l43',
+          '...',
+          '@@ -74,1 +78,2 @@ async finish() {',
+          '+notifyExternal(payload);',
+          ' l79',
+        ].join('\n'),
+        lines: ['+const dry = process.env.DRY_RUN;', ' l43', '+notifyExternal(payload);', ' l79'],
+      },
+      contextBefore: [],
+      contextAfter: [],
+      contextStartLine: 42,
+      language: 'typescript',
+    };
+
+    const output = formatHunkForAnalysis(hunkCtx);
+
+    // notifyExternal is at true line 78 - it must NOT be numbered 54 (the bug).
+    expect(output).toMatch(/^\s*78 \+notifyExternal\(payload\);$/m);
+    expect(output).not.toMatch(/54 \+notifyExternal/);
+    expect(output).toContain('unchanged, omitted');
+  });
+
   it('omits scope when no header', () => {
     const hunkCtx = {
       filename: 'test.ts',

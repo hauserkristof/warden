@@ -2,7 +2,7 @@ import { spawnSync } from 'node:child_process';
 import { readFileSync, existsSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import type { DiffHunk, ParsedDiff } from './parser.js';
-import { getExpandedLineRange } from './parser.js';
+import { getExpandedLineRange, numberHunkNewLines } from './parser.js';
 import type { DiffContextSource } from '../types/index.js';
 import { GIT_NON_INTERACTIVE_ENV } from '../utils/exec.js';
 
@@ -244,6 +244,35 @@ export function expandDiffContext(
 }
 
 /**
+ * Render a hunk's changed lines with absolute new-file line numbers.
+ *
+ * Removed lines are shown without a number. Where the numbering jumps (a
+ * coalesced hunk spanning an unchanged gap), a marker documents the omitted
+ * range so the model does not assume the lines are contiguous.
+ */
+function formatNumberedChanges(hunk: DiffHunk): string {
+  const out: string[] = [];
+  let previousNewLine: number | undefined;
+
+  for (const line of numberHunkNewLines(hunk)) {
+    if (line.marker === '-') {
+      out.push(`      -${line.content}`);
+      continue;
+    }
+
+    if (previousNewLine !== undefined && line.newLine > previousNewLine + 1) {
+      out.push(`      ... (lines ${previousNewLine + 1}-${line.newLine - 1} unchanged, omitted)`);
+    }
+
+    const label = String(line.newLine).padStart(5, ' ');
+    out.push(`${label} ${line.marker}${line.content}`);
+    previousNewLine = line.newLine;
+  }
+
+  return out.join('\n');
+}
+
+/**
  * Format a hunk with context for LLM analysis.
  */
 export function formatHunkForAnalysis(hunkCtx: HunkWithContext): string {
@@ -268,10 +297,13 @@ export function formatHunkForAnalysis(hunkCtx: HunkWithContext): string {
     lines.push('');
   }
 
-  // The actual changes
+  // The actual changes. Each new-file line is prefixed with its ABSOLUTE line
+  // number so the model can report location.startLine directly instead of
+  // counting positions (which drifts on coalesced multi-segment hunks).
   lines.push(`### Changes`);
+  lines.push('Each changed line is prefixed with its absolute line number in the new file. Use those exact numbers for `location.startLine`/`endLine`. Lines marked `-` are removed and have no new-file line number.');
   lines.push('```diff');
-  lines.push(hunkCtx.hunk.content);
+  lines.push(formatNumberedChanges(hunkCtx.hunk));
   lines.push('```');
   lines.push('');
 

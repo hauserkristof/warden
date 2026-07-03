@@ -4,8 +4,10 @@ import {
   parseFileDiff,
   getHunkLineRange,
   getExpandedLineRange,
+  numberHunkNewLines,
   type DiffHunk,
 } from './parser.js';
+import { coalesceHunks } from './coalesce.js';
 
 describe('parsePatch', () => {
   it('parses a simple hunk', () => {
@@ -208,5 +210,71 @@ describe('getExpandedLineRange', () => {
     const range = getExpandedLineRange(hunk, 50);
     expect(range.start).toBe(50); // 100 - 50
     expect(range.end).toBe(154); // 104 + 50
+  });
+});
+
+describe('numberHunkNewLines', () => {
+  it('numbers added and context lines with their absolute new-file line', () => {
+    const [hunk] = parsePatch(
+      '@@ -10,2 +10,3 @@\n const a = 1;\n+const b = 2;\n const c = 3;'
+    );
+    const numbered = numberHunkNewLines(hunk as DiffHunk);
+
+    expect(numbered).toEqual([
+      { marker: ' ', newLine: 10, content: 'const a = 1;' },
+      { marker: '+', newLine: 11, content: 'const b = 2;' },
+      { marker: ' ', newLine: 12, content: 'const c = 3;' },
+    ]);
+  });
+
+  it('does not advance the new-file counter for removed lines', () => {
+    const [hunk] = parsePatch(
+      '@@ -10,2 +10,1 @@\n-old one\n-old two\n+replacement'
+    );
+    const numbered = numberHunkNewLines(hunk as DiffHunk);
+
+    expect(numbered).toEqual([
+      { marker: '-', content: 'old one' },
+      { marker: '-', content: 'old two' },
+      { marker: '+', newLine: 10, content: 'replacement' },
+    ]);
+  });
+
+  // Regression for the inline-comment line-drift bug: a coalesced hunk merges
+  // the changed lines of several original hunks and drops the unchanged gap
+  // between them. Numbering must restart at each embedded @@ header so lines
+  // deep in the file keep their true absolute number instead of drifting
+  // negative (the reported symptom: e.g. line 78 anchored at 54).
+  it('keeps absolute line numbers across a coalesced multi-hunk gap', () => {
+    // reconciliation.service.ts (97 lines) with changes at true lines 9,45,52,78.
+    const patch = [
+      '@@ -6,4 +6,5 @@ class ReconciliationService {',
+      ' l6', ' l7', ' l8',
+      '+const KEY = "sk_live_hardcoded";', // true line 9
+      ' l10',
+      '@@ -40,10 +42,12 @@ async reconcile() {',
+      ' l42', ' l43', ' l44',
+      '+const dry = process.env.DRY_RUN;', // true line 45
+      ' l46', ' l47', ' l48', ' l49', ' l50', ' l51',
+      '+await sql.raw(`SELECT ${id}`);', // true line 52
+      ' l53',
+      '@@ -74,1 +78,2 @@ async finish() {',
+      '+notifyExternal(payload);', // true line 78
+      ' l79',
+    ].join('\n');
+
+    const coalesced = coalesceHunks(parsePatch(patch), { maxGapLines: 30 });
+
+    // Hunk 1 stays separate (gap 31 > 30); hunks 2 and 3 coalesce (gap 24 <= 30).
+    expect(coalesced).toHaveLength(2);
+
+    const changedLine = (hunk: DiffHunk): number[] =>
+      numberHunkNewLines(hunk)
+        .filter((line) => line.marker === '+')
+        .map((line) => (line.marker === '+' ? line.newLine : 0));
+
+    expect(changedLine(coalesced[0] as DiffHunk)).toEqual([9]);
+    // The deep line (78) must NOT drift to 54 (the pre-fix bug value).
+    expect(changedLine(coalesced[1] as DiffHunk)).toEqual([45, 52, 78]);
   });
 });

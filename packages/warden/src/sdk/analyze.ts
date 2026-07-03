@@ -1,7 +1,7 @@
 import type { Span } from '@sentry/node';
 import type { SkillDefinition } from '../config/schema.js';
 import type { ErrorCode, Finding, RetryConfig } from '../types/index.js';
-import { getHunkLineRange, type HunkWithContext } from '../diff/index.js';
+import { getHunkLineRange, numberHunkNewLines, type DiffHunk, type HunkWithContext } from '../diff/index.js';
 import { Sentry, emitExtractionMetrics, emitRetryMetric, emitSkillMetrics, ensureLocalTracing } from '../sentry.js';
 import { SkillRunnerError, WardenAuthenticationError, isRetryableError, isAuthenticationError, isAuthenticationErrorMessage, isSubprocessError, classifyError, mapExtractionErrorCode, sanitizeErrorMessage } from './errors.js';
 import type { CircuitBreakerReason } from './circuit-breaker.js';
@@ -213,19 +213,59 @@ export function filterOutOfRangeFindings(
   return { filtered, dropped };
 }
 
+/**
+ * Reconcile a model-reported finding line against the hunk's actual changed
+ * lines. If the reported `startLine` already lands on a changed (`+`) line it is
+ * left untouched; otherwise it snaps to the nearest changed line in the hunk
+ * (with `endLine` shifted by the same delta and clamped to the hunk range).
+ *
+ * This is a defence-in-depth safety net: the primary fix numbers the diff so the
+ * model reports absolute lines directly, but a slightly-off line still anchors
+ * to the right changed line instead of a neighbouring unchanged one.
+ */
+export function reconcileFindingLine(finding: Finding, hunk: DiffHunk): Finding {
+  if (!finding.location) return finding;
+
+  const changedLines: number[] = [];
+  for (const line of numberHunkNewLines(hunk)) {
+    if (line.marker === '+') changedLines.push(line.newLine);
+  }
+
+  const [first, ...rest] = changedLines;
+  if (first === undefined) return finding;
+
+  const { startLine } = finding.location;
+  if (changedLines.includes(startLine)) return finding;
+
+  let nearest = first;
+  for (const candidate of rest) {
+    if (Math.abs(candidate - startLine) < Math.abs(nearest - startLine)) {
+      nearest = candidate;
+    }
+  }
+
+  const delta = nearest - startLine;
+  const hunkEnd = hunk.newStart + hunk.newCount - 1;
+  const location = { ...finding.location, startLine: nearest };
+  if (finding.location.endLine !== undefined) {
+    location.endLine = Math.min(Math.max(nearest, finding.location.endLine + delta), hunkEnd);
+  }
+
+  return { ...finding, location };
+}
+
 function hunkSourceLines(hunkCtx: HunkWithContext): SourceSnippetLine[] {
   const lines: SourceSnippetLine[] = [];
   for (const [index, content] of hunkCtx.contextBefore.entries()) {
     lines.push({ line: hunkCtx.contextStartLine + index, content });
   }
 
-  let newLine = hunkCtx.hunk.newStart;
-  for (const diffLine of hunkCtx.hunk.lines) {
-    if (diffLine.startsWith('-')) continue;
-    if (!diffLine.startsWith('+') && !diffLine.startsWith(' ')) continue;
-    const content = diffLine.slice(1);
-    lines.push({ line: newLine, content });
-    newLine += 1;
+  // Use absolute new-file numbering (honours embedded @@ headers) so coalesced
+  // hunks map every changed line to its true line instead of counting across
+  // the dropped gap. Trailing blank artifacts are naturally excluded.
+  for (const numbered of numberHunkNewLines(hunkCtx.hunk)) {
+    if (numbered.marker === '-') continue;
+    lines.push({ line: numbered.newLine, content: numbered.content });
   }
 
   const afterStart = hunkCtx.hunk.newStart + hunkCtx.hunk.newCount;
@@ -509,9 +549,13 @@ async function analyzeHunk(
             () => parseHunkOutput(resultMessage, hunkCtx.filename, skill.name, options),
           );
 
-          // Filter findings outside hunk line range (defense-in-depth)
+          // Snap slightly-off model lines onto the nearest changed line, then
+          // filter anything still outside the hunk range (defense-in-depth).
+          const reconciledFindings = parseResult.findings.map((finding) =>
+            reconcileFindingLine(finding, hunkCtx.hunk)
+          );
           const hunkRange = getHunkLineRange(hunkCtx.hunk);
-          const { filtered, dropped } = filterOutOfRangeFindings(parseResult.findings, hunkRange);
+          const { filtered, dropped } = filterOutOfRangeFindings(reconciledFindings, hunkRange);
           const filteredFindings = attachSourceSnippets(filtered, hunkCtx);
           if (dropped.length > 0) {
             Sentry.addBreadcrumb({

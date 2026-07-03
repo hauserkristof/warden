@@ -68,6 +68,7 @@ Requirements:
 - Return valid JSON starting with {"findings":
 - "findings" array can be empty if no issues found
 - "location.path" is auto-filled from context - just provide startLine (and optionally endLine). Omit location entirely for general findings not about a specific line.
+- Every changed line in the "### Changes" block is printed with its absolute new-file line number. Copy that exact number into "location.startLine" (and "endLine"). Do NOT count positions yourself, and never assume the shown lines are contiguous - a "... unchanged, omitted" marker means line numbers jump.
 - "suggestion" is optional. Include it ONLY when you have a concrete, complete fix. It must be the exact replacement for every line in "location" (set "location.endLine" to cover the full span you are rewriting). Emit new code only - no leading '+'/'-', no unchanged context lines. Omit "suggestion" for advisory findings or when the fix touches code outside the range.
 - "location.startLine" MUST be within the hunk line range (shown in the "## Hunk" header). If the issue originates in surrounding code, anchor to the nearest changed line in the hunk and note the actual location in the description.
 - "confidence" reflects how certain you are this is a real issue given the codebase context

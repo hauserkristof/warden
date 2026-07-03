@@ -1,9 +1,10 @@
 import { describe, it, expect, vi, afterEach, beforeAll, afterAll } from 'vitest';
 import { APIError } from '@anthropic-ai/sdk';
 import type { SkillDefinition } from '../config/schema.js';
-import type { HunkWithContext } from '../diff/index.js';
+import type { DiffHunk, HunkWithContext } from '../diff/index.js';
+import { coalesceHunks, parsePatch } from '../diff/index.js';
 import type { EventContext, Finding, UsageStats } from '../types/index.js';
-import { analyzeFile, buildSourceSnippet, filterOutOfRangeFindings, runSkill } from './analyze.js';
+import { analyzeFile, buildSourceSnippet, filterOutOfRangeFindings, reconcileFindingLine, runSkill } from './analyze.js';
 import type { PreparedFile } from './types.js';
 import { getRuntime, type Runtime } from './runtimes/index.js';
 import { ProviderFailureCircuitBreaker } from './circuit-breaker.js';
@@ -311,6 +312,83 @@ describe('buildSourceSnippet', () => {
       { line: 10, content: 'newCall();', highlighted: true },
       { line: 11, content: 'after();', highlighted: false },
     ]);
+  });
+});
+
+// Realistic multi-hunk patch mirroring the reported drift table:
+// reconciliation.service.ts (97 lines), changes at true lines 9, 45, 52, 78.
+const DRIFT_PATCH = [
+  '@@ -6,4 +6,5 @@ class ReconciliationService {',
+  ' l6', ' l7', ' l8',
+  '+const KEY = "sk_live_hardcoded";', // true line 9
+  ' l10',
+  '@@ -40,10 +42,12 @@ async reconcile() {',
+  ' l42', ' l43', ' l44',
+  '+const dry = process.env.DRY_RUN;', // true line 45
+  ' l46', ' l47', ' l48', ' l49', ' l50', ' l51',
+  '+await sql.raw(`SELECT ${id}`);', // true line 52
+  ' l53',
+  '@@ -74,1 +78,2 @@ async finish() {',
+  '+notifyExternal(payload);', // true line 78
+  ' l79',
+].join('\n');
+
+function coalescedHunkContext(): HunkWithContext {
+  const coalesced = coalesceHunks(parsePatch(DRIFT_PATCH), { maxGapLines: 30 });
+  // Second entry is the merged 42..79 hunk (hunks 2 and 3 coalesced).
+  return {
+    filename: 'reconciliation.service.ts',
+    hunk: coalesced[1] as DiffHunk,
+    contextBefore: [],
+    contextAfter: [],
+    contextStartLine: (coalesced[1] as DiffHunk).newStart,
+    language: 'typescript',
+  };
+}
+
+describe('buildSourceSnippet across a coalesced gap', () => {
+  it('anchors a deep finding to its true line, not a drifted one', () => {
+    // notifyExternal truly lives at line 78. Before the fix the merged hunk's
+    // lines were numbered sequentially (ignoring the dropped 54..77 gap), so
+    // this line was mis-numbered 54 and a finding at 78 produced no snippet.
+    const snippet = buildSourceSnippet(makeFinding(78), coalescedHunkContext(), 1);
+
+    expect(snippet).toBeDefined();
+    const target = snippet?.lines.find((line) => line.highlighted);
+    expect(target).toEqual({ line: 78, content: 'notifyExternal(payload);', highlighted: true });
+  });
+});
+
+describe('reconcileFindingLine', () => {
+  it('leaves a finding already on a changed line untouched', () => {
+    const hunk = coalescedHunkContext().hunk;
+    const finding = makeFinding(52);
+
+    expect(reconcileFindingLine(finding, hunk)).toBe(finding);
+  });
+
+  it('snaps a slightly-off line to the nearest changed line', () => {
+    const hunk = coalescedHunkContext().hunk;
+
+    // 77 is one line above the real changed line 78.
+    const reconciled = reconcileFindingLine(makeFinding(77), hunk);
+    expect(reconciled.location?.startLine).toBe(78);
+  });
+
+  it('shifts endLine by the same delta and clamps to the hunk range', () => {
+    const hunk = coalescedHunkContext().hunk;
+    const finding: Finding = { ...makeFinding(51), location: { path: 'file.ts', startLine: 51, endLine: 51 } };
+
+    const reconciled = reconcileFindingLine(finding, hunk);
+    expect(reconciled.location?.startLine).toBe(52);
+    expect(reconciled.location?.endLine).toBe(52);
+  });
+
+  it('returns the finding unchanged when it has no location', () => {
+    const hunk = coalescedHunkContext().hunk;
+    const finding = makeGeneralFinding();
+
+    expect(reconcileFindingLine(finding, hunk)).toBe(finding);
   });
 });
 
