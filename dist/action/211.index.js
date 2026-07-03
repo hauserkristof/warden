@@ -9502,6 +9502,7 @@ __webpack_require__.d(__webpack_exports__, {
   ZC: () => (/* reexport */ expandDiffContext),
   xP: () => (/* reexport */ formatHunkForAnalysis),
   sK: () => (/* reexport */ getHunkLineRange),
+  Zs: () => (/* reexport */ numberHunkNewLines),
   jx: () => (/* reexport */ parseFileDiff),
   PQ: () => (/* reexport */ splitLargeHunks)
 });
@@ -9592,6 +9593,46 @@ function getHunkLineRange(hunk) {
         start: hunk.newStart,
         end: hunk.newStart + hunk.newCount - 1,
     };
+}
+/**
+ * Assign absolute new-file line numbers to each body line of a hunk.
+ *
+ * Walks the hunk's raw `content` and resets the running line counter every time
+ * it meets an `@@` header. This matters for coalesced hunks (see
+ * `mergeHunks` in coalesce.ts): their `lines` array concatenates the changed
+ * lines of several original hunks and DROPS the unchanged gap between them,
+ * while the merged `content` still carries each segment's `@@` header. Counting
+ * the concatenated `lines` sequentially (old behaviour) undercounts every line
+ * after the first gap, drifting increasingly negative the deeper the code sits.
+ * Honouring the embedded `@@` headers keeps every line's number absolute.
+ */
+function numberHunkNewLines(hunk) {
+    const result = [];
+    let newLine = hunk.newStart;
+    for (const raw of hunk.content.split('\n')) {
+        const header = parseHunkHeader(raw);
+        if (header) {
+            newLine = header.newStart;
+            continue;
+        }
+        const marker = raw.charAt(0);
+        if (marker === '-') {
+            result.push({ marker: '-', content: raw.slice(1) });
+            continue;
+        }
+        if (marker === '+') {
+            result.push({ marker: '+', content: raw.slice(1), newLine });
+            newLine += 1;
+            continue;
+        }
+        if (marker === ' ') {
+            result.push({ marker: ' ', content: raw.slice(1), newLine });
+            newLine += 1;
+        }
+        // Anything else (blank artifacts, the '...' coalesce separator) is not an
+        // addressable new-file line and is skipped.
+    }
+    return result;
 }
 /**
  * Get an expanded line range for context.
@@ -9772,6 +9813,30 @@ function expandDiffContext(repoPath, diff, options = 20) {
     return diff.hunks.map((hunk) => expandHunkContext(repoPath, diff.filename, hunk, options));
 }
 /**
+ * Render a hunk's changed lines with absolute new-file line numbers.
+ *
+ * Removed lines are shown without a number. Where the numbering jumps (a
+ * coalesced hunk spanning an unchanged gap), a marker documents the omitted
+ * range so the model does not assume the lines are contiguous.
+ */
+function formatNumberedChanges(hunk) {
+    const out = [];
+    let previousNewLine;
+    for (const line of numberHunkNewLines(hunk)) {
+        if (line.marker === '-') {
+            out.push(`      -${line.content}`);
+            continue;
+        }
+        if (previousNewLine !== undefined && line.newLine > previousNewLine + 1) {
+            out.push(`      ... (lines ${previousNewLine + 1}-${line.newLine - 1} unchanged, omitted)`);
+        }
+        const label = String(line.newLine).padStart(5, ' ');
+        out.push(`${label} ${line.marker}${line.content}`);
+        previousNewLine = line.newLine;
+    }
+    return out.join('\n');
+}
+/**
  * Format a hunk with context for LLM analysis.
  */
 function formatHunkForAnalysis(hunkCtx) {
@@ -9791,10 +9856,13 @@ function formatHunkForAnalysis(hunkCtx) {
         lines.push('```');
         lines.push('');
     }
-    // The actual changes
+    // The actual changes. Each new-file line is prefixed with its ABSOLUTE line
+    // number so the model can report location.startLine directly instead of
+    // counting positions (which drifts on coalesced multi-segment hunks).
     lines.push(`### Changes`);
+    lines.push('Each changed line is prefixed with its absolute line number in the new file. Use those exact numbers for `location.startLine`/`endLine`. Lines marked `-` are removed and have no new-file line number.');
     lines.push('```diff');
-    lines.push(hunkCtx.hunk.content);
+    lines.push(formatNumberedChanges(hunkCtx.hunk));
     lines.push('```');
     lines.push('');
     // Context after
@@ -11745,7 +11813,7 @@ async function resolveStaleComments(octokit, staleComments, options = {}) {
 /* harmony export */   ur: () => (/* binding */ generateSummary),
 /* harmony export */   xy: () => (/* binding */ analyzeFile)
 /* harmony export */ });
-/* unused harmony exports filterOutOfRangeFindings, buildSourceSnippet */
+/* unused harmony exports filterOutOfRangeFindings, reconcileFindingLine, buildSourceSnippet */
 /* harmony import */ var _diff_index_js__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(96497);
 /* harmony import */ var _sentry_js__WEBPACK_IMPORTED_MODULE_1__ = __webpack_require__(30340);
 /* harmony import */ var _errors_js__WEBPACK_IMPORTED_MODULE_2__ = __webpack_require__(98229);
@@ -11897,20 +11965,56 @@ function filterOutOfRangeFindings(findings, hunkRange) {
     }
     return { filtered, dropped };
 }
+/**
+ * Reconcile a model-reported finding line against the hunk's actual changed
+ * lines. If the reported `startLine` already lands on a changed (`+`) line it is
+ * left untouched; otherwise it snaps to the nearest changed line in the hunk
+ * (with `endLine` shifted by the same delta and clamped to the hunk range).
+ *
+ * This is a defence-in-depth safety net: the primary fix numbers the diff so the
+ * model reports absolute lines directly, but a slightly-off line still anchors
+ * to the right changed line instead of a neighbouring unchanged one.
+ */
+function reconcileFindingLine(finding, hunk) {
+    if (!finding.location)
+        return finding;
+    const changedLines = [];
+    for (const line of (0,_diff_index_js__WEBPACK_IMPORTED_MODULE_0__/* .numberHunkNewLines */ .Zs)(hunk)) {
+        if (line.marker === '+')
+            changedLines.push(line.newLine);
+    }
+    const [first, ...rest] = changedLines;
+    if (first === undefined)
+        return finding;
+    const { startLine } = finding.location;
+    if (changedLines.includes(startLine))
+        return finding;
+    let nearest = first;
+    for (const candidate of rest) {
+        if (Math.abs(candidate - startLine) < Math.abs(nearest - startLine)) {
+            nearest = candidate;
+        }
+    }
+    const delta = nearest - startLine;
+    const hunkEnd = hunk.newStart + hunk.newCount - 1;
+    const location = { ...finding.location, startLine: nearest };
+    if (finding.location.endLine !== undefined) {
+        location.endLine = Math.min(Math.max(nearest, finding.location.endLine + delta), hunkEnd);
+    }
+    return { ...finding, location };
+}
 function hunkSourceLines(hunkCtx) {
     const lines = [];
     for (const [index, content] of hunkCtx.contextBefore.entries()) {
         lines.push({ line: hunkCtx.contextStartLine + index, content });
     }
-    let newLine = hunkCtx.hunk.newStart;
-    for (const diffLine of hunkCtx.hunk.lines) {
-        if (diffLine.startsWith('-'))
+    // Use absolute new-file numbering (honours embedded @@ headers) so coalesced
+    // hunks map every changed line to its true line instead of counting across
+    // the dropped gap. Trailing blank artifacts are naturally excluded.
+    for (const numbered of (0,_diff_index_js__WEBPACK_IMPORTED_MODULE_0__/* .numberHunkNewLines */ .Zs)(hunkCtx.hunk)) {
+        if (numbered.marker === '-')
             continue;
-        if (!diffLine.startsWith('+') && !diffLine.startsWith(' '))
-            continue;
-        const content = diffLine.slice(1);
-        lines.push({ line: newLine, content });
-        newLine += 1;
+        lines.push({ line: numbered.newLine, content: numbered.content });
     }
     const afterStart = hunkCtx.hunk.newStart + hunkCtx.hunk.newCount;
     for (const [index, content] of hunkCtx.contextAfter.entries()) {
@@ -12143,9 +12247,11 @@ async function analyzeHunk(skill, hunkCtx, repoPath, options, callbacks, prConte
                 }
                 options.circuitBreaker?.recordSuccess();
                 const parseResult = await (0,_sentry_trace_js__WEBPACK_IMPORTED_MODULE_11__/* .withTraceRecorder */ .gP)(traceRecorder, () => parseHunkOutput(resultMessage, hunkCtx.filename, skill.name, options));
-                // Filter findings outside hunk line range (defense-in-depth)
+                // Snap slightly-off model lines onto the nearest changed line, then
+                // filter anything still outside the hunk range (defense-in-depth).
+                const reconciledFindings = parseResult.findings.map((finding) => reconcileFindingLine(finding, hunkCtx.hunk));
                 const hunkRange = (0,_diff_index_js__WEBPACK_IMPORTED_MODULE_0__/* .getHunkLineRange */ .sK)(hunkCtx.hunk);
-                const { filtered, dropped } = filterOutOfRangeFindings(parseResult.findings, hunkRange);
+                const { filtered, dropped } = filterOutOfRangeFindings(reconciledFindings, hunkRange);
                 const filteredFindings = attachSourceSnippets(filtered, hunkCtx);
                 if (dropped.length > 0) {
                     _sentry_js__WEBPACK_IMPORTED_MODULE_1__/* .Sentry.addBreadcrumb */ .sQ.addBreadcrumb({
@@ -13895,6 +14001,7 @@ Requirements:
 - Return valid JSON starting with {"findings":
 - "findings" array can be empty if no issues found
 - "location.path" is auto-filled from context - just provide startLine (and optionally endLine). Omit location entirely for general findings not about a specific line.
+- Every changed line in the "### Changes" block is printed with its absolute new-file line number. Copy that exact number into "location.startLine" (and "endLine"). Do NOT count positions yourself, and never assume the shown lines are contiguous - a "... unchanged, omitted" marker means line numbers jump.
 - "suggestion" is optional. Include it ONLY when you have a concrete, complete fix. It must be the exact replacement for every line in "location" (set "location.endLine" to cover the full span you are rewriting). Emit new code only - no leading '+'/'-', no unchanged context lines. Omit "suggestion" for advisory findings or when the fix touches code outside the range.
 - "location.startLine" MUST be within the hunk line range (shown in the "## Hunk" header). If the issue originates in surrounding code, anchor to the nearest changed line in the hunk and note the actual location in the description.
 - "confidence" reflects how certain you are this is a real issue given the codebase context

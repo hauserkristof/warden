@@ -19,8 +19,8 @@ import type { TraceRecorder } from '../../sentry-trace.js';
 import type { UsageStats } from '../../types/index.js';
 import type { RuntimeMcpOptions } from './mcp/index.js';
 export declare const RuntimeNameSchema: z.ZodEnum<{
-    pi: "pi";
     claude: "claude";
+    pi: "pi";
 }>;
 export type RuntimeName = z.infer<typeof RuntimeNameSchema>;
 export type SkillRunStatus = 'success' | 'provider_error' | 'auth_error' | 'turn_limit' | 'budget_limit' | 'aborted' | 'structured_output_error';

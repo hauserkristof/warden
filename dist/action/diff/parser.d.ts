@@ -43,6 +43,31 @@ export declare function getHunkLineRange(hunk: DiffHunk): {
     end: number;
 };
 /**
+ * A single body line of a hunk annotated with its absolute new-file line number.
+ * Removed lines (`-`) do not exist in the new file, so they carry no line number.
+ */
+export type NumberedDiffLine = {
+    marker: '+' | ' ';
+    newLine: number;
+    content: string;
+} | {
+    marker: '-';
+    content: string;
+};
+/**
+ * Assign absolute new-file line numbers to each body line of a hunk.
+ *
+ * Walks the hunk's raw `content` and resets the running line counter every time
+ * it meets an `@@` header. This matters for coalesced hunks (see
+ * `mergeHunks` in coalesce.ts): their `lines` array concatenates the changed
+ * lines of several original hunks and DROPS the unchanged gap between them,
+ * while the merged `content` still carries each segment's `@@` header. Counting
+ * the concatenated `lines` sequentially (old behaviour) undercounts every line
+ * after the first gap, drifting increasingly negative the deeper the code sits.
+ * Honouring the embedded `@@` headers keeps every line's number absolute.
+ */
+export declare function numberHunkNewLines(hunk: DiffHunk): NumberedDiffLine[];
+/**
  * Get an expanded line range for context.
  */
 export declare function getExpandedLineRange(hunk: DiffHunk, contextLines?: number): {
